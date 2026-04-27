@@ -1,0 +1,149 @@
+---
+title: "Method performance in single sample setting"
+author: "Florica Constantine"
+date: "2025-07-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+# WITH OR WITHOUT 4 CELLS
+result_type <- "subset_cells" # "all_cells", "subset_cells"
+
+# Library
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(patchwork)
+
+# Paths
+processed_data_path <- "../../data/processed/"
+figure_path <- "../../figures/single_sample/"
+
+# Read in model results
+if(result_type == "subset_cells"){
+summary_out_all <- readRDS(paste0(processed_data_path, "single_sample_subset_cells_perfsummary_onlyinteract.rds"))
+} else{
+  summary_out_all <- readRDS(paste0(processed_data_path, "single_sample_all_cells_perfsummary_onlyinteract.rds"))
+}
+
+# Subset to genes by quartiles for variance
+summary_out_all <- summary_out_all[which(summary_out_all$gene %in% c("IGKC", "DDX24", "SMTN", "CRLS1", "ERP44")), ]
+summary_out_all$gene <- factor(summary_out_all$gene, levels = c("IGKC", "DDX24", "SMTN", "CRLS1", "ERP44"))
+
+# Rename models
+summary_out_all <- summary_out_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Leroux" = "TESSERA-Leroux",
+                            "CAR" = "TESSERA-CAR",
+                            "SAR" = "TESSERA-SAR",
+                            "spNNGP" = "TESSERA-spNNGP",
+                            "INLA_BYM2" = "INLA BYM2",
+                            "MCMC_CAR" = "MCMC CAR",
+                            "MCMC_Leroux" = "MCMC Leroux",
+                            "BRISC" = "BRISC",
+                            "GLM_Poisson" = "Poisson GLM",
+                            "GLM_NB" = "NB GLM",
+                            "MGCV" = "GAM",
+                            "LM" = "LM"))
+summary_out_all$fit_model <- factor(summary_out_all$fit_model, levels = c("TESSERA-Leroux", "TESSERA-CAR", "TESSERA-SAR", "TESSERA-spNNGP", "INLA BYM2", "MCMC Leroux", "MCMC CAR", "BRISC", "GAM", "Poisson GLM", "NB GLM", "LM"))
+
+# Rename data generating model
+summary_out_all$data_model <- paste0("Poisson-", summary_out_all$data_model)
+```
+
+```{r}
+# Colors for models when using color and fill in ggplots
+model_color_vals <- c("TESSERA-Leroux" = "#C77CFF", "TESSERA-CAR" = "pink", "TESSERA-SAR" = "indianred1", "TESSERA-spNNGP" = "#32CD32", "INLA BYM2" = "orchid", "MCMC Leroux" = "purple", "MCMC CAR" = "red", "BRISC" = "seagreen", "Poisson GLM" = "dodgerblue", "NB GLM" = "blue", "GAM" = "burlywood", "LM" = "gray")
+model_fill_vals <- c("TESSERA-Leroux" = "#C77CFF", "TESSERA-CAR" = "pink", "TESSERA-SAR" = "indianred1", "TESSERA-spNNGP" = "#32CD32", "INLA BYM2" = "orchid", "MCMC Leroux" = "purple", "MCMC CAR" = "red", "BRISC" = "seagreen", "Poisson GLM" = "lightblue", "NB GLM" = "cornflowerblue", "GAM" = "burlywood", "LM" = "gray")
+```
+
+# Relative squared error in beta for Poisson-Leroux generated data
+
+```{r}
+plot_data <- summary_out_all[which(summary_out_all$data_model == "Poisson-Leroux"), ]
+
+p <- ggplot2::ggplot(plot_data, aes(x = gene, y = beta_SE / beta_norm2, fill = fit_model))
+p <- p + ggplot2::geom_boxplot(outliers = FALSE)
+p <- p + ggplot2::facet_wrap(~data_model)
+p <- p + ggplot2::scale_fill_manual(name = "", values = model_fill_vals)
+p <- p + ggplot2::guides(fill = ggplot2::guide_legend(byrow = TRUE))
+p <- p + ggplot2::scale_y_log10()
+# Update X-axis labels with math expressions
+p <- p + ggplot2::scale_x_discrete(labels = c("Maximum", expression(Q[3]), "Median", expression(Q[1]), "Minimum"))
+# Use bold beta in the y-axis label
+p <- p + ggplot2::labs(x = "Gene Variance", y = expression(paste("Relative squared error in ", bold(beta))))
+# Denote whether or not you include low-abundance cell types
+# if(result_type == "subset_cells"){
+#   p <- p + ggplot2::labs(subtitle = "Note: Low-abundance cell types **excluded**.")
+# } else {
+#   p <- p + ggplot2::labs(subtitle = "Note: Low-abundance cell types **included**.")
+# }
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+p <- p + ggplot2::theme(plot.subtitle = ggtext::element_markdown(hjust = 0.5, size = 16, margin = margin(b = 10)))
+#p <- p + ggplot2::theme(plot.caption = ggtext::element_markdown(hjust = 0.5, size = 16))
+p
+ggplot2::ggsave(paste0(figure_path, "synth_beta_error_datagen_Leroux_", result_type, ".pdf"), p, dpi = 300, width=10, height=8)
+```
+
+# Relative squared error in beta for Poisson-spNNGP generated data
+
+```{r}
+plot_data <- summary_out_all[which(summary_out_all$data_model == "Poisson-spNNGP"), ]
+
+p <- ggplot2::ggplot(plot_data, aes(x = gene, y = beta_SE / beta_norm2, fill = fit_model))
+p <- p + ggplot2::geom_boxplot(outliers = FALSE)
+p <- p + ggplot2::facet_wrap(~data_model)
+p <- p + ggplot2::scale_fill_manual(name = "", values = model_fill_vals)
+p <- p + ggplot2::guides(fill = ggplot2::guide_legend(byrow = TRUE))
+p <- p + ggplot2::scale_y_log10()
+# Update X-axis labels with math expressions
+p <- p + ggplot2::scale_x_discrete(labels = c("Maximum", expression(Q[3]), "Median", expression(Q[1]), "Minimum"))
+# Use bold beta in the y-axis label
+p <- p + ggplot2::labs(x = "Gene Variance", y = expression(paste("Relative squared error in ", bold(beta))))
+# Denote whether or not you include low-abundance cell types
+# if(result_type == "subset_cells"){
+#   p <- p + ggplot2::labs(subtitle = "Note: Low-abundance cell types **excluded**.")
+# } else {
+#   p <- p + ggplot2::labs(subtitle = "Note: Low-abundance cell types **included**.")
+# }
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+p <- p + ggplot2::theme(plot.subtitle = ggtext::element_markdown(hjust = 0.5, size = 16, margin = margin(b = 10)))
+#p <- p + ggplot2::theme(plot.caption = ggtext::element_markdown(hjust = 0.5, size = 16))
+p
+ggplot2::ggsave(paste0(figure_path, "synth_beta_error_datagen_spNNGP_", result_type, ".pdf"), p, dpi = 300, width=10, height=8)
+```
+
+# Relative squared error in beta for high and low variance gene
+
+```{r}
+plot_df <- summary_out_all[which(summary_out_all$gene %in% c("IGKC", "ERP44")), ]
+plot_df <- plot_df %>%
+  mutate(alt_gene_name = recode(gene,
+                            "IGKC" = "High",
+                            "ERP44" = "Low"))
+p <- ggplot2::ggplot(plot_df, aes(x = alt_gene_name, y = beta_SE / beta_norm2, fill = fit_model))
+p <- p + ggplot2::geom_boxplot(outliers = FALSE)
+p <- p + ggplot2::facet_wrap(~data_model)
+p <- p + ggplot2::scale_fill_manual(name = "", values = model_fill_vals)
+p <- p + ggplot2::guides(fill = ggplot2::guide_legend(byrow = TRUE))
+p <- p + ggplot2::scale_y_log10()
+p <- p + ggplot2::labs(x = "Gene Variance", y = expression(paste("Relative squared error in ", beta)))
+# Denote whether or not you include low-abundance cell types
+# if(result_type == "subset_cells"){
+#   p <- p + ggplot2::labs(subtitle = "Note: Low-abundance cell types **excluded**.")
+# } else {
+#   p <- p + ggplot2::labs(subtitle = "Note: Low-abundance cell types **included**.")
+# }
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+p <- p + ggplot2::theme(plot.subtitle = ggtext::element_markdown(hjust = 0.5, size = 16, margin = margin(b = 10)))
+#p <- p + ggplot2::theme(plot.caption = ggtext::element_markdown(hjust = 0.5, size = 16))
+p
+ggplot2::ggsave(paste0(figure_path, "synth_beta_error_comb_", result_type, ".pdf"), p, width=10, height=8, units = "in", dpi = 300)
+```

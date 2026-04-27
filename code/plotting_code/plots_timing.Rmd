@@ -1,0 +1,96 @@
+---
+title: "Model performance in single sample setting"
+author: "Florica"
+date: "2025-07-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+# Library
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(patchwork)
+
+# Paths
+processed_data_path <- "../../data/processed/"
+figure_path <- "../../figures/timing/"
+
+# Read in model results
+summary_out_all <- readRDS(paste0(processed_data_path, "timing_results.rds"))
+# Subset to genes by quartiles for variance
+summary_out_all$n_samples <- factor(summary_out_all$n_samples, levels = c(1, 6, 12, 24))
+summary_out_all$n_cells <- factor(summary_out_all$n_cells, levels = c(500, 1000, 2000, 4000))
+summary_out_all$beta_dim <- factor(summary_out_all$beta_dim, levels = c(25, 50, 100))
+
+# Rename models
+summary_out_all <- summary_out_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Leroux" = "TESSERA-Leroux",
+                            "CAR" = "TESSERA-CAR",
+                            "SAR" = "TESSERA-SAR",
+                            "spNNGP" = "TESSERA-spNNGP",
+                            "INLA_BYM2" = "INLA BYM2",
+                            "MCMC_CAR" = "MCMC CAR",
+                            "MCMC_Leroux" = "MCMC Leroux",
+                            "BRISC" = "BRISC",
+                            "Poisson_GLM" = "Poisson GLM ",
+                            "NB_GLM" = "NB GLM",
+                            "MGCV" = "GAM",
+                            "LM" = "LM"))
+summary_out_all$fit_model <- factor(summary_out_all$fit_model, levels = c("TESSERA-Leroux", "TESSERA-CAR", "TESSERA-SAR", "TESSERA-spNNGP", "INLA BYM2", "MCMC Leroux", "MCMC CAR", "BRISC", "Poisson GLM ", "NB GLM", "GAM", "LM"))
+```
+
+```{r}
+# Colors for models when using color and fill in ggplots
+model_color_vals <- c("TESSERA-Leroux" = "mediumpurple1", "TESSERA-CAR" = "pink", "TESSERA-SAR" = "orange", "TESSERA-spNNGP" = "lightgreen", "INLA BYM2" = "orchid", "MCMC CAR" = "red", "MCMC Leroux" = "purple", "BRISC" = "seagreen", "Poisson GLM " = "dodgerblue", "NB GLM" = "blue", "GAM" = "sienna", "LM" = "gray")
+model_fill_vals <- c("TESSERA-Leroux" = "mediumpurple1", "TESSERA-CAR" = "pink", "TESSERA-SAR" = "orange", "TESSERA-spNNGP" = "lightgreen", "INLA BYM2" = "orchid", "MCMC CAR" = "red", "MCMC Leroux" = "purple", "BRISC" = "seagreen", "Poisson GLM " = "dodgerblue", "NB GLM" = "blue", "GAM" = "sienna", "LM" = "gray")
+```
+
+# Timing
+
+```{r}
+# Data to plot
+plot_data <- (summary_out_all %>% dplyr::group_by(fit_model, n_samples, n_cells, beta_dim, trial_idx, data_model) 
+              %>% dplyr::summarise(mean_time_sec = mean(time_sec)))
+
+
+# Order the data by n_cells and beta_dim
+plot_data <- plot_data[order(plot_data$n_cells, plot_data$beta_dim), ]
+# Create a combined factor with levels in the correct order
+plot_data$facet_label <- with(
+  plot_data,
+  factor(
+    #paste0("Number of cells: ", n_cells, ", Dimension of beta: ", beta_dim),
+    #levels = unique(paste0("Number of cells: ", n_cells, ", Dimension of beta: ", beta_dim))
+    paste0("'Number of cells: ", n_cells, ", Dimension of ' * bold(beta) * ': ' * ", beta_dim),
+    levels = unique(paste0("'Number of cells: ", n_cells, ", Dimension of ' * bold(beta) * ': ' * ", beta_dim))
+    )
+)
+
+plot_data <- plot_data %>%
+  dplyr::ungroup() %>%
+  tidyr::complete(
+    facet_label,
+    n_samples,
+    fit_model,
+    fill = list(mean_time_sec = NA)
+  )
+
+p <- ggplot2::ggplot(plot_data, aes(x = n_samples, y = mean_time_sec/60, fill = fit_model))
+p <- p + ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.8))
+p <- p + ggplot2::facet_wrap(~ facet_label, ncol = 3, labeller = ggplot2::label_parsed)
+p <- p + ggplot2::scale_fill_manual(name = "", values = model_fill_vals)
+p <- p + ggplot2::guides(fill = ggplot2::guide_legend(byrow = TRUE))
+p <- p + ggplot2::scale_y_sqrt(breaks = c(250, 1000, 2000, 4000, 6000))
+p <- p + ggplot2::labs(x = "Number of Samples", y = "Run Time (minutes)")
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20), legend.position = "bottom", panel.grid.minor = element_blank())
+#p <- p + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p
+ggplot2::ggsave(paste0(figure_path, "timing.pdf"), p, dpi = 300, width=16, height=12)
+```

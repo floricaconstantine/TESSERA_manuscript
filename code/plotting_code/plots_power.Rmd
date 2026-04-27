@@ -1,0 +1,408 @@
+---
+title: "Power and Type I Error Figures"
+author: "Florica"
+date: "2025-07-14"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning=F, message=F)
+```
+
+```{r}
+# Libraries
+library(TESSERA)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+
+# Data generation model
+datagen_type <- "spNNGP" # "Leroux", "spNNGP"
+
+# Paths
+processed_data_path <- "../../data/processed/"
+figure_path <- paste0("../../figures/power/datagen_", datagen_type, "/")
+
+# Data
+seu_kid <- readRDS(paste0(processed_data_path, "seu_kidney.rds"))
+
+tessera_wald_df <- readRDS(paste0(processed_data_path, "synth_from_real_hyptest_tessera.rds"))
+tessera_wald_df <- tessera_wald_df$tessera_wald_df
+tessera_wald_df <- tessera_wald_df %>% dplyr::filter(datagen_model == datagen_type)
+
+if(datagen_type == "Leroux"){
+  glm_wald_df_all <- readRDS(paste0(processed_data_path, "glm_offset_power_waldstats_onlyinteract.rds"))
+  glm_wald_df_all <- glm_wald_df_all %>% dplyr::filter(datagen_model == "Leroux")
+} else{
+  glm_wald_df_all <- readRDS(paste0(processed_data_path, "glm_offset_power_waldstats_onlyinteract.rds"))
+  glm_wald_df_all <- glm_wald_df_all %>% dplyr::filter(datagen_model == "spNNGP")
+}
+glm_wald_df_all <- glm_wald_df_all %>% dplyr::filter(datagen_model == datagen_type)
+
+pb_wald_df_all <- readRDS(paste0(processed_data_path, "power_contrasts_pb_results.rds"))
+pb_wald_df_all <- pb_wald_df_all %>% dplyr::filter(datagen_model == datagen_type)
+
+wald_df_all <- dplyr::bind_rows(tessera_wald_df, glm_wald_df_all, pb_wald_df_all)
+```
+
+```{r}
+# Rename models
+wald_df_all <- wald_df_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Leroux" = "TESSERA-Leroux",
+                            "CAR" = "TESSERA-CAR",
+                            "SAR" = "TESSERA-SAR",
+                            "spNNGP" = "TESSERA-spNNGP",
+                            "DESeq2" = "DESeq2",
+                            "limma_voom" = "limma-voom",
+                            "Poisson_GLM" = "Poisson GLM",
+                            "NB_GLM" = "NB GLM",
+                            "GAM" = "GAM"))
+
+wald_df_all <- wald_df_all %>%
+  mutate(datagen_model = recode(datagen_model,
+                            "Leroux" = "Poisson-Leroux"))
+
+wald_df_all$fit_model <- factor(wald_df_all$fit_model, levels = c("TESSERA-Leroux", "DESeq2", "limma-voom", "Poisson GLM", "NB GLM", "GAM"))
+wald_df_all$changed_covariate <- factor(wald_df_all$changed_covariate, levels = c("GroupDKD:celltypePodo", "GroupDKD:celltypeIC", "GroupDKD:celltypeGS_Stromal", "GroupDKD:celltypeC_TAL"))
+
+wald_df_all$celltype <- gsub("GroupDKD:celltype", "", wald_df_all$changed_covariate)
+
+wald_df_all <- wald_df_all %>%
+  mutate(facet_label = case_when(
+    celltype == "Podo"        ~ "Podo (~ 40 cells per sample)",
+    celltype == "IC"          ~ "IC (~ 75 cells per sample)",
+    celltype == "GS_Stromal"  ~ "GS_Stromal (~ 165 cells per sample)",
+    celltype == "C_TAL"       ~ "C_TAL (~ 600 cells per sample)"
+  ))
+
+desired_order <- c(
+  "Podo (~ 40 cells per sample)",
+  "IC (~ 75 cells per sample)",
+  "GS_Stromal (~ 165 cells per sample)",
+  "C_TAL (~ 600 cells per sample)"
+)
+
+wald_df_all$facet_label <- factor(wald_df_all$facet_label, levels = desired_order)
+```
+
+```{r}
+# Color palettes
+
+cond_color_vals <- c("cornflowerblue", "goldenrod", "lightcoral")
+
+model_color_vals <- c("TESSERA-Leroux" = "#C77CFF", "TESSERA-CAR" = "pink", "TESSERA-SAR" = "indianred1", "TESSERA-spNNGP" = "#32CD32", "DESeq2" = "darkorange", "limma-voom" = "goldenrod1", "Poisson GLM" = "lightblue",  "NB GLM" =  "cornflowerblue", "GAM" = "tan4")
+```
+
+```{r}
+# Load in data
+prep_data <- readRDS(paste0(processed_data_path, "prepData_lattice_onlyinteract.rds"))
+X_mat <- Reduce(rbind, prep_data$X_list)
+X_cts <- sapply(1:ncol(X_mat), function(x) {sum(X_mat[, x] > 0)})
+```
+
+```{r}
+# We plot the number of non-zero rows for each covariate, i.e., the number of cells that belong to the corresponding group. 
+# The number of non-zero cells differs dramatically across the covariates, even if they have the same true fixed effect value.
+ctyp_cov_idx <- grep("celltype", colnames(X_mat))
+df_n_cells <- data.frame(covariate=colnames(X_mat)[ctyp_cov_idx], 
+                         n_cells=X_cts[ctyp_cov_idx],
+                         Group=sapply(strsplit(sapply(strsplit(colnames(X_mat)[ctyp_cov_idx], "Group"), "[[", 2), ":"), "[[", 1),
+                         celltype=sapply(strsplit(sapply(strsplit(colnames(X_mat)[ctyp_cov_idx], "celltype"), "[[", 2), ":"), "[[", 1)
+                         )
+df_n_cells$covariate_clean <- paste0(df_n_cells$Group, ": ", df_n_cells$celltype)
+p <- ggplot2::ggplot(data=df_n_cells,
+                     ggplot2::aes(x=covariate_clean, y=n_cells, fill = Group)
+                     )
+p <- p + ggplot2::scale_fill_manual(values = cond_color_vals, name = "Condition")
+p <- p + ggplot2::geom_point(size = 4, shape = 21, stroke = 0.5, color = "black")
+p <- p + ggplot2::scale_y_continuous(trans="log10")
+p <- p + ggplot2::labs(x="Cell type-condition pair", y="Number of cells")
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 30), axis.text.x = ggplot2::element_text(size = 12, angle = 90, hjust = 1, vjust=0.5))
+p
+ggplot2::ggsave(paste0(figure_path, "num_cells_per_contrast.pdf"), p, width = 16, height=12, units = "in", dpi = 300)
+```
+
+```{r}
+# Compute number of cells per sample per cell type
+df_avg_cells <- (seu_kid@meta.data %>%
+  as.data.frame() %>%
+  dplyr::count(Group, orig.ident, celltype, name = "n_cells"))
+
+# Compute average number of cells per sample per group and cell type
+df_avg_cells <- df_avg_cells %>%
+  group_by(Group, celltype) %>%
+  summarise(
+    avg_cells_per_sample = mean(n_cells),
+    sd_cells_per_sample = sd(n_cells),
+    .groups = "drop"
+  )
+
+
+p <- ggplot(df_avg_cells, aes(x = celltype, y = avg_cells_per_sample, fill = Group))
+p <- p + geom_col(position = position_dodge(width = 0.8), color = "black")
+# p <- p + geom_errorbar(aes(ymin = avg_cells_per_sample - sd_cells_per_sample,
+#                            ymax = avg_cells_per_sample + sd_cells_per_sample
+#                            ),
+#                        position = position_dodge(width = 0.8), 
+#                        color = "purple",
+#                        width = 0.2
+#                        ) 
+p <- p + ggplot2::scale_fill_manual(values = cond_color_vals, name = "Condition")
+# p <- p + geom_text(aes(label = round(avg_cells_per_sample, 1)),
+#                    position = position_dodge2(width = 0.8, padding = 0.1),  # align with bars
+#                    angle = 90, hjust = -0.1, vjust = 0.5, size = 2.5
+#                    ) 
+p <- p + labs(x = "Cell Type", y = "Average Number of Cells per Sample") 
+p <- p + theme_bw() 
+p <- p + theme(text = element_text(size = 20), axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave(paste0(figure_path, "avg_num_cells_per_sample.pdf"), p, width = 12, height=9, units = "in", dpi = 300)
+```
+
+
+```{r}
+PVAL_THRESH <- 0.05
+
+pb_idx <- grepl("limma-voom", wald_df_all$fit_model) | grepl("DESeq2", wald_df_all$fit_model)
+glm_idx <- grepl("GLM", wald_df_all$fit_model)
+gam_idx <- grepl("GAM", wald_df_all$fit_model)
+local_idx <- glm_idx | gam_idx
+wald_df_all$wald_pval[local_idx] <- pchisq(wald_df_all$wald_stat_t[local_idx]^2, 1, lower.tail = FALSE)
+
+power_df <- (wald_df_all
+             %>% dplyr::group_by(gene,
+                                 datagen_model,
+                                 fit_model,
+                                 kernel_type,
+                                 changed_covariate,
+                                 true_contrast_value,
+                                 celltype,
+                                 facet_label)
+             %>% dplyr::summarise(p_rej=mean(wald_pval < PVAL_THRESH, na.rm=TRUE))
+)
+
+```
+
+
+```{r}
+p <- ggplot2::ggplot(data=power_df, ggplot2::aes(x=true_contrast_value, y=p_rej, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + scale_color_manual(name = "", values = model_color_vals)
+#p <- p + ggplot2::facet_wrap(~ interaction(celltype, label, sep = " "))
+p <- p + ggplot2::facet_wrap(~ facet_label)
+p <- p + ggplot2::labs(x = "Contrast Value", y = "Power", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+#p <- p + theme(strip.text = element_text(size = 8))
+p
+ggplot2::ggsave(paste0(figure_path, "power.pdf"), p, width = 12, height=9, units = "in", dpi = 300)
+```
+
+
+```{r}
+power_df_gs <- power_df[which(power_df$changed_covariate == "GroupDKD:celltypeC_TAL"), ]
+
+p <- ggplot2::ggplot(data=power_df_gs, ggplot2::aes(x=true_contrast_value, y=p_rej, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "Contrast Value", y = "Power", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20))
+p <- p + theme(strip.text = element_text(size = 8))
+p
+ggplot2::ggsave(paste0(figure_path, "power_C_TAL.pdf"), p, width=8, height=6, units = "in", dpi = 300)
+
+p_power <- p
+```
+
+```{r}
+p <- ggplot2::ggplot(data=wald_df_all, ggplot2::aes(x=true_contrast_value, y=wald_stat_t^2, color=fit_model))
+p <- p + ggplot2::geom_smooth(linewidth=1)
+p <- p + scale_color_manual(name = "", values = model_color_vals)
+p <- p + ggplot2::labs(x = "Contrast Value", y = "Test Statistic", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + ggplot2::scale_y_sqrt()
+p <- p + ggplot2::facet_wrap(~ facet_label)
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+p
+ggplot2::ggsave(paste0(figure_path, "test_stat.pdf"), p, width=12, height=9, units = "in", dpi = 300)
+```
+
+```{r}
+p <- ggplot2::ggplot(data=wald_df_all, ggplot2::aes(x=true_contrast_value, y=-contrast_val, color=fit_model))
+p <- p + ggplot2::geom_smooth(linewidth=1)
+p <- p + scale_color_manual(name = "", values = model_color_vals)
+p <- p + ggplot2::labs(x = "Contrast Value", y = "Estimated Contrast Value", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + ggplot2::geom_abline(slope = 1, intercept = 0, linetype="dashed")
+p <- p + ggplot2::facet_wrap(~ facet_label)
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+p
+ggplot2::ggsave(paste0(figure_path, "est_contrast_val.pdf"), p, width=12, height=9, units = "in", dpi = 300)
+```
+
+
+```{r}
+p <- ggplot2::ggplot(data=wald_df_all, ggplot2::aes(x=true_contrast_value, y=contrast_se, color=fit_model))
+p <- p + ggplot2::geom_smooth(linewidth=1)
+p <- p + ggplot2::scale_y_sqrt()#scale_y_log10()
+p <- p + scale_color_manual(name = "", values = model_color_vals)
+p <- p + ggplot2::labs(x = "Contrast Value", y = "Estimated Standard Error of the Estimated Contrast", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + ggplot2::facet_wrap(~ facet_label)
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+p
+ggplot2::ggsave(paste0(figure_path, "est_contrast_se.pdf"), p, width=12, height=9, units = "in", dpi = 300)
+```
+
+
+```{r}
+p <- ggplot2::ggplot(data=wald_df_all, ggplot2::aes(x=true_contrast_value, y=contrast_se, color=facet_label))
+p <- p + ggplot2::geom_smooth(linewidth=1)
+p <- p + ggplot2::scale_y_sqrt()#scale_y_log10()
+p <- p + ggplot2::labs(x = "Contrast Value", y = "Estimated Standard Error of the Estimated Contrast", color = "")
+p <- p + ggplot2::guides(color = guide_legend(nrow = 2, byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + ggplot2::facet_wrap(~ fit_model)
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+p
+ggplot2::ggsave(paste0(figure_path, "est_contrast_se_by_method.pdf"), p, width=12, height=9, units = "in", dpi = 300)
+```
+
+```{r}
+p_value_thresholds <- seq(0.0, 1.0, 0.01)
+roc_columns_groupby <- c("datagen_model", "fit_model", "gene",
+                         "changed_covariate", "baseline_contrast", "celltype", "facet_label")
+
+# Use map_df to iterate and bind results automatically
+roc_df <- purrr::map_df(p_value_thresholds, function(thresh) {
+  
+  wald_df_all %>%
+    group_by(across(all_of(roc_columns_groupby))) %>%
+    summarise(
+      threshold = thresh,
+      # Compute FPR: Proportion of nulls incorrectly called significant
+      fpr = mean(wald_pval < thresh & true_contrast_value == 0, na.rm = TRUE) / 
+            mean(true_contrast_value == 0, na.rm = TRUE),
+      # Compute TPR: Proportion of non-nulls correctly called significant
+      tpr = mean(wald_pval < thresh & true_contrast_value != 0, na.rm = TRUE) / 
+            mean(true_contrast_value != 0, na.rm = TRUE),
+      .groups = "drop"
+    )
+})
+```
+
+```{r}
+roc_at_val_df <- purrr::map_df(p_value_thresholds, function(thresh) {
+  
+  # Calculate FPR
+  null_perf <- wald_df_all %>%
+    filter(true_contrast_value == 0) %>%
+    group_by(across(all_of(roc_columns_groupby))) %>%
+    summarise(
+      fpr = mean(wald_pval < thresh, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # Calculate TPR
+  signal_perf <- wald_df_all %>%
+    filter(true_contrast_value != 0) %>%
+    group_by(across(all_of(c(roc_columns_groupby, "true_contrast_value")))) %>%
+    summarise(
+      tpr = mean(wald_pval < thresh, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # Join them to create the ROC pairs for each contrast
+  inner_join(signal_perf, null_perf, by = roc_columns_groupby) %>%
+    mutate(threshold = thresh)
+})
+```
+
+```{r}
+roc_at_val_df$fit_model <- forcats::fct_rev(roc_at_val_df$fit_model)
+facet_labeller <- ggplot2::as_labeller(function(x) paste("Contrast value:", x))
+
+p <- ggplot2::ggplot(data = roc_at_val_df 
+                     %>% dplyr::filter(changed_covariate == "GroupDKD:celltypeC_TAL")
+                     %>% dplyr::filter(true_contrast_value %in% c(-1.0, 1.0, -0.5, 0.5, -0.25, 0.25)),
+                     mapping = ggplot2::aes(x = fpr, y = tpr, color = fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + ggplot2::facet_wrap(~true_contrast_value, labeller = facet_labeller)
+p <- p + ggplot2::scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "Type I error", y = "Power", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5), reverse = TRUE))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), panel.spacing = unit(1.2, "lines"))
+p
+ggplot2::ggsave(paste0(figure_path, "roc_C_TAL.pdf"), p, width=12, height=8, units = "in", dpi = 300)
+```
+
+```{r}
+roc_df_gs <- roc_df[which(roc_df$changed_covariate == "GroupDKD:celltypeC_TAL"), ]
+
+p <- ggplot2::ggplot(data=roc_df_gs, ggplot2::aes(x=threshold, y=fpr, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + ggplot2::scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "p-value threshold", y = "Type I error", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20))
+p
+ggplot2::ggsave(paste0(figure_path, "type1_error_C_TAL.pdf"), p, width=8, height=6, units = "in", dpi = 300)
+
+p_fpr <- p
+```
+
+```{r}
+p <- ggplot2::ggplot(data=roc_df, ggplot2::aes(x=threshold, y=fpr, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + scale_color_manual(name = "", values = model_color_vals) #labels = function(x) str_wrap(x, width = 12)
+p <- p + ggplot2::labs(x = "p-value threshold", y = "Type I error", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + ggplot2::facet_wrap(~ facet_label)
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom")
+p
+ggplot2::ggsave(paste0(figure_path, "type1_error.pdf"), p, width=12, height=9, units = "in", dpi = 300)
+```
+
+```{r}
+roc_df_gs <- roc_df[which(roc_df$changed_covariate == "GroupDKD:celltypeC_TAL"), ]
+
+p <- ggplot2::ggplot(data=roc_df_gs, ggplot2::aes(x=threshold, y=fpr, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "p-value threshold", y = "Type I error", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20))
+p
+ggplot2::ggsave(paste0(figure_path, "type1_error_C_TAL.pdf"), p, width=8, height=6, units = "in", dpi = 300)
+
+p_fpr <- p
+```
+
+```{r}
+p_fin <- ((p_power + theme(legend.position="none")
+          + guides(color = "none", fill = "none", linetype = "none"))
+          + (p_fpr + theme(legend.title = element_blank()) 
+             + guides(color = guide_legend(override.aes = list(linewidth = 5), nrow = 2, byrow = TRUE))) 
+          + plot_layout(guides = "collect") & theme(legend.position = "bottom"))
+p_fin
+ggplot2::ggsave(paste0(figure_path, "power_type1error_comb.pdf"), p_fin, width=9, height=6, units = "in", dpi = 300)
+```
+
+
+

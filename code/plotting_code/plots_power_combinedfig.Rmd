@@ -1,0 +1,445 @@
+---
+title: "Power and Type I Error Figures"
+output: pdf_document
+date: "2026-01-04"
+---
+
+```{r}
+# Libraries
+library(TESSERA)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+
+# Data generation model
+datagen_type <- "Leroux"
+
+# Paths
+processed_data_path <- "../../data/processed/"
+figure_path <- "../../figures/power/"
+
+# Data
+
+seu_kid <- readRDS(paste0(processed_data_path, "seu_kidney.rds"))
+
+tessera_wald_df <- readRDS(paste0(processed_data_path, "synth_from_real_hyptest_tessera.rds"))
+tessera_wald_df <- tessera_wald_df$tessera_wald_df
+tessera_misspec_wald_df <- tessera_wald_df %>% dplyr::filter(datagen_model == "spNNGP")
+tessera_wald_df <- tessera_wald_df %>% dplyr::filter(datagen_model == "Leroux")
+
+glm_wald_df_all <- readRDS(paste0(processed_data_path, "glm_offset_power_waldstats_onlyinteract.rds"))
+glm_misspec_wald_df_all <- glm_wald_df_all %>% dplyr::filter(datagen_model == "spNNGP")
+glm_wald_df_all <- glm_wald_df_all %>% dplyr::filter(datagen_model == "Leroux")
+
+pb_wald_df_all <- readRDS(paste0(processed_data_path, "power_contrasts_pb_results.rds"))
+pb_misspec_wald_df_all <- pb_wald_df_all %>% dplyr::filter(datagen_model == "spNNGP")
+pb_wald_df_all <- pb_wald_df_all %>% dplyr::filter(datagen_model == "Leroux")
+
+wald_df_all <- dplyr::bind_rows(tessera_wald_df, glm_wald_df_all, pb_wald_df_all)
+misspec_wald_df_all <- dplyr::bind_rows(tessera_misspec_wald_df, glm_misspec_wald_df_all, pb_misspec_wald_df_all)
+```
+
+```{r}
+# Rename models
+wald_df_all <- wald_df_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Leroux" = "TESSERA-Leroux",
+                            "CAR" = "TESSERA-CAR",
+                            "SAR" = "TESSERA-SAR",
+                            "spNNGP" = "TESSERA-spNNGP",
+                            "DESeq2" = "DESeq2",
+                            "limma_voom" = "limma-voom",
+                            "Poisson_GLM" = "Poisson GLM",
+                            "NB_GLM" = "NB GLM",
+                            "GAM" = "GAM"))
+
+wald_df_all <- wald_df_all %>%
+  mutate(datagen_model = recode(datagen_model,
+                            "Leroux" = "Poisson-Leroux"))
+
+wald_df_all$fit_model <- factor(wald_df_all$fit_model, levels = c("TESSERA-Leroux", "DESeq2", "limma-voom", "Poisson GLM", "NB GLM", "GAM"))
+wald_df_all$changed_covariate <- factor(wald_df_all$changed_covariate, levels = c("GroupDKD:celltypePodo", "GroupDKD:celltypeIC", "GroupDKD:celltypeGS_Stromal", "GroupDKD:celltypeC_TAL"))
+
+wald_df_all$celltype <- gsub("GroupDKD:celltype", "", wald_df_all$changed_covariate)
+
+wald_df_all <- wald_df_all %>%
+  mutate(facet_label = case_when(
+    celltype == "Podo"        ~ "Podo (~ 40 cells per sample)",
+    celltype == "IC"          ~ "IC (~ 75 cells per sample)",
+    celltype == "GS_Stromal"  ~ "GS_Stromal (~ 165 cells per sample)",
+    celltype == "C_TAL"       ~ "C_TAL (~ 600 cells per sample)"
+  ))
+
+desired_order <- c(
+  "Podo (~ 40 cells per sample)",
+  "IC (~ 75 cells per sample)",
+  "GS_Stromal (~ 165 cells per sample)",
+  "C_TAL (~ 600 cells per sample)"
+)
+
+wald_df_all$facet_label <- factor(wald_df_all$facet_label, levels = desired_order)
+```
+
+```{r}
+# Rename models
+misspec_wald_df_all <- misspec_wald_df_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Leroux" = "TESSERA-Leroux",
+                            "CAR" = "TESSERA-CAR",
+                            "SAR" = "TESSERA-SAR",
+                            "spNNGP" = "TESSERA-spNNGP",
+                            "DESeq2" = "DESeq2",
+                            "limma_voom" = "limma-voom",
+                            "Poisson_GLM" = "Poisson GLM",
+                            "NB_GLM" = "NB GLM",
+                            "GAM" = "GAM"))
+
+misspec_wald_df_all <- misspec_wald_df_all %>%
+  mutate(datagen_model = recode(datagen_model,
+                            "spNNGP" = "Poisson-spNNGP"))
+
+misspec_wald_df_all$fit_model <- factor(misspec_wald_df_all$fit_model, levels = c("TESSERA-Leroux", "DESeq2", "limma-voom", "Poisson GLM", "NB GLM", "GAM"))
+misspec_wald_df_all$changed_covariate <- factor(misspec_wald_df_all$changed_covariate, levels = c("GroupDKD:celltypePodo", "GroupDKD:celltypeIC", "GroupDKD:celltypeGS_Stromal", "GroupDKD:celltypeC_TAL"))
+
+misspec_wald_df_all$celltype <- gsub("GroupDKD:celltype", "", misspec_wald_df_all$changed_covariate)
+
+misspec_wald_df_all <- misspec_wald_df_all %>%
+  mutate(facet_label = case_when(
+    celltype == "Podo"        ~ "Podo (~ 40 cells per sample)",
+    celltype == "IC"          ~ "IC (~ 75 cells per sample)",
+    celltype == "GS_Stromal"  ~ "GS_Stromal (~ 165 cells per sample)",
+    celltype == "C_TAL"       ~ "C_TAL (~ 600 cells per sample)"
+  ))
+
+desired_order <- c(
+  "Podo (~ 40 cells per sample)",
+  "IC (~ 75 cells per sample)",
+  "GS_Stromal (~ 165 cells per sample)",
+  "C_TAL (~ 600 cells per sample)"
+)
+
+misspec_wald_df_all$facet_label <- factor(misspec_wald_df_all$facet_label, levels = desired_order)
+```
+
+```{r}
+# Color palettes
+cond_color_vals <- c("cornflowerblue", "goldenrod", "lightcoral")
+
+model_color_vals <- c("TESSERA-Leroux" = "#C77CFF", "TESSERA-CAR" = "pink", "TESSERA-SAR" = "indianred1", "TESSERA-spNNGP" = "#32CD32", "DESeq2" = "darkorange", "limma-voom" = "goldenrod1", "Poisson GLM" = "lightblue",  "NB GLM" =  "cornflowerblue", "GAM" = "tan4")
+```
+
+```{r}
+PVAL_THRESH <- 0.05
+
+pb_idx <- grepl("limma-voom", wald_df_all$fit_model) | grepl("DESeq2", wald_df_all$fit_model)
+glm_idx <- grepl("GLM", wald_df_all$fit_model)
+gam_idx <- grepl("GAM", wald_df_all$fit_model)
+local_idx <- glm_idx | gam_idx
+wald_df_all$wald_pval[local_idx] <- pchisq(wald_df_all$wald_stat_t[local_idx]^2, 1, lower.tail = FALSE)
+
+power_df <- (wald_df_all
+             %>% dplyr::group_by(gene,
+                                 datagen_model,
+                                 fit_model,
+                                 kernel_type,
+                                 changed_covariate,
+                                 true_contrast_value,
+                                 celltype,
+                                 facet_label)
+             %>% dplyr::summarise(p_rej=mean(wald_pval < PVAL_THRESH, na.rm=TRUE))
+)
+```
+
+```{r}
+PVAL_THRESH <- 0.05
+
+pb_idx <- grepl("limma-voom", misspec_wald_df_all$fit_model) | grepl("DESeq2", misspec_wald_df_all$fit_model)
+glm_idx <- grepl("GLM", misspec_wald_df_all$fit_model)
+gam_idx <- grepl("GAM", misspec_wald_df_all$fit_model)
+local_idx <- glm_idx | gam_idx
+misspec_wald_df_all$wald_pval[local_idx] <- pchisq(misspec_wald_df_all$wald_stat_t[local_idx]^2, 1, lower.tail = FALSE)
+
+misspec_power_df <- (misspec_wald_df_all
+             %>% dplyr::group_by(gene,
+                                 datagen_model,
+                                 fit_model,
+                                 kernel_type,
+                                 changed_covariate,
+                                 true_contrast_value,
+                                 celltype,
+                                 facet_label)
+             %>% dplyr::summarise(p_rej=mean(wald_pval < PVAL_THRESH, na.rm=TRUE))
+)
+```
+
+```{r, message=FALSE}
+p_value_thresholds <- seq(0.0, 1.0, 0.01)
+columns_groupby <- c("datagen_model", "fit_model", "gene",
+                         "changed_covariate", "baseline_contrast", "celltype", "facet_label")
+
+type1_list <- list() 
+for (thresh in p_value_thresholds) {
+  fpr_inner <- (wald_df_all %>% dplyr::filter(true_contrast_value == 0) 
+                %>% dplyr::group_by_at(columns_groupby) 
+                %>% dplyr::summarise(fpr = mean(wald_pval < thresh, na.rm=TRUE), .groups = 'drop'))
+  
+  tpr_inner <- (wald_df_all %>% dplyr::filter(true_contrast_value != 0) 
+                %>% dplyr::group_by_at(columns_groupby) 
+                %>% dplyr::summarise(tpr = mean(wald_pval < thresh, na.rm=TRUE), .groups = 'drop'))
+  
+  df_inner <- merge(fpr_inner, tpr_inner, by=columns_groupby)
+  df_inner$threshold <- thresh
+  type1_list[[length(type1_list) + 1]] <- df_inner
+}
+type1_df <- dplyr::bind_rows(type1_list)
+```
+
+```{r, message=FALSE}
+p_value_thresholds <- seq(0.0, 1.0, 0.01)
+columns_groupby <- c("datagen_model", "fit_model", "gene",
+                         "changed_covariate", "baseline_contrast", "celltype", "facet_label")
+
+misspec_type1_list <- list()
+for (thresh in p_value_thresholds) {
+  # Use misspec_wald_df_all as the source
+  fpr_inner <- (misspec_wald_df_all %>% dplyr::filter(true_contrast_value == 0) 
+                %>% dplyr::group_by_at(columns_groupby) 
+                %>% dplyr::summarise(fpr = mean(wald_pval < thresh, na.rm=TRUE), .groups = 'drop'))
+  
+  tpr_inner <- (misspec_wald_df_all %>% dplyr::filter(true_contrast_value != 0) 
+                %>% dplyr::group_by_at(columns_groupby) 
+                %>% dplyr::summarise(tpr = mean(wald_pval < thresh, na.rm=TRUE), .groups = 'drop'))
+  
+  df_inner <- merge(fpr_inner, tpr_inner, by=columns_groupby)
+  df_inner$threshold <- thresh
+  misspec_type1_list[[length(misspec_type1_list) + 1]] <- df_inner
+}
+misspec_type1_df <- dplyr::bind_rows(misspec_type1_list)
+```
+
+```{r}
+power_df_plot_df <- power_df[which(power_df$changed_covariate == "GroupDKD:celltypeC_TAL"), ]
+
+p <- ggplot2::ggplot(data=power_df_plot_df, ggplot2::aes(x=true_contrast_value, y=p_rej, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::facet_wrap(~datagen_model)
+p <- p + ggplot2::scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "Contrast Value", y = "Power", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20))
+p_power <- p
+p_power
+```
+
+```{r}
+misspec_power_plot_df <- misspec_power_df[which(misspec_power_df$changed_covariate == "GroupDKD:celltypeC_TAL"), ]
+
+p <- ggplot2::ggplot(data=misspec_power_plot_df, ggplot2::aes(x=true_contrast_value, y=p_rej, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::facet_wrap(~datagen_model)
+p <- p + ggplot2::scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "Contrast Value", y = "Power", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20))
+p_misspec_power <- p
+p_misspec_power
+```
+
+```{r}
+type1_plot_df <- type1_df[which(type1_df$changed_covariate == "GroupDKD:celltypeC_TAL"), ]
+
+p <- ggplot2::ggplot(data=type1_plot_df, ggplot2::aes(x=threshold, y=fpr, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + ggplot2::facet_wrap(~datagen_model)
+p <- p + ggplot2::scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "p-value threshold", y = "Type I error", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20))
+p_type1 <- p
+p_type1
+```
+
+```{r}
+misspec_type1_plot_df <- misspec_type1_df[which(misspec_type1_df$changed_covariate == "GroupDKD:celltypeC_TAL"), ]
+
+p <- ggplot2::ggplot(data=misspec_type1_plot_df, ggplot2::aes(x=threshold, y=fpr, color=fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + ggplot2::facet_wrap(~datagen_model)
+p <- p + ggplot2::scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "p-value threshold", y = "Type I error", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20))
+p_misspec_type1 <- p
+p_misspec_type1
+```
+
+```{r}
+# Combine the four plots
+p_fin_grid <- (
+  (p_power + p_type1) / 
+  (p_misspec_power + p_misspec_type1)
+) + 
+  plot_layout(guides = "collect") & 
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) &
+  guides(color = guide_legend(override.aes = list(linewidth = 5), nrow = 2, byrow = TRUE))
+
+# Display
+p_fin_grid
+
+# Save
+ggplot2::ggsave(paste0(figure_path, "power_type1error_all4.pdf"), p_fin_grid, width=10, height=8, units = "in", dpi = 300)
+```
+
+```{r}
+if(identical(colnames(wald_df_all), colnames(misspec_wald_df_all)) == TRUE){
+  comb_wald_df_all <- rbind(wald_df_all, misspec_wald_df_all)
+}
+plot_data <- comb_wald_df_all[which(comb_wald_df_all$fit_model == "TESSERA-Leroux"), ]
+p1 <- ggplot2::ggplot(data=plot_data, ggplot2::aes(x=true_contrast_value, y=-contrast_val, color=datagen_model))
+p1 <- p1 + ggplot2::geom_smooth(linewidth=1)
+p1 <- p1 + scale_color_manual(name = "", values = c("Poisson-Leroux" = "#C77CFF", "Poisson-spNNGP" = "#32CD32"))
+p1 <- p1 + ggplot2::labs(x = "Contrast Value", y = "Estimated Contrast Value", color = "Data Generation Model")
+p1 <- p1 + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p1 <- p1 + ggplot2::geom_abline(slope = 1, intercept = 0, linetype="dashed")
+p1 <- p1 + ggplot2::facet_wrap(~ facet_label)
+p1 <- p1 + ggplot2::theme_bw()
+p1 <- p1 + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom", strip.text = element_text(size = 12))
+
+p2 <- ggplot2::ggplot(data=plot_data, ggplot2::aes(x=true_contrast_value, y=contrast_se, color=datagen_model))
+p2 <- p2 + ggplot2::geom_smooth(linewidth=1)
+p2 <- p2 + ggplot2::scale_y_sqrt()#scale_y_log10()
+p2 <- p2 + scale_color_manual(name = "", values = c("Poisson-Leroux" = "#C77CFF", "Poisson-spNNGP" = "#32CD32"))
+p2 <- p2 + ggplot2::labs(x = "Contrast Value", y = "Estimated Standard Error of the Estimated Contrast", color = "Fitted Model")
+p2 <- p2 + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p2 <- p2 + ggplot2::facet_wrap(~ facet_label)
+p2 <- p2 + ggplot2::theme_bw()
+p2 <- p2 + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom", strip.text = element_text(size = 12))
+
+p <- p1 + p2
+p
+ggplot2::ggsave(paste0(figure_path, "est_contrast_val_and_se_all4.pdf"), p, width=14, height=9, units = "in", dpi = 300)
+```
+
+```{r}
+if(identical(colnames(wald_df_all), colnames(misspec_wald_df_all)) == TRUE){
+  comb_wald_df_all <- rbind(wald_df_all, misspec_wald_df_all)
+}
+plot_data <- comb_wald_df_all[which(comb_wald_df_all$fit_model == "TESSERA-Leroux"), ]
+p1 <- ggplot2::ggplot(data=plot_data, ggplot2::aes(x=true_contrast_value, y=-contrast_val - true_contrast_value, color=datagen_model))
+p1 <- p1 + ggplot2::geom_smooth(linewidth=1)
+p1 <- p1 + scale_color_manual(name = "", values = c("Poisson-Leroux" = "#C77CFF", "Poisson-spNNGP" = "#32CD32"))
+p1 <- p1 + ggplot2::labs(x = "True Contrast Value", y = "Estimated Contrast Value - True Contrast Value", color = "Data Generation Model")
+p1 <- p1 + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p1 <- p1 + ggplot2::geom_hline(yintercept = 0, linetype="dashed")
+p1 <- p1 + ggplot2::facet_wrap(~ facet_label)
+p1 <- p1 + ggplot2::ylim(min(comb_wald_df_all$true_contrast_value), max(comb_wald_df_all$true_contrast_value))
+p1 <- p1 + ggplot2::theme_bw()
+p1 <- p1 + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom", strip.text = element_text(size = 12))
+
+p2 <- ggplot2::ggplot(data=plot_data, ggplot2::aes(x=true_contrast_value, y=contrast_se, color=datagen_model))
+p2 <- p2 + ggplot2::geom_smooth(linewidth=1)
+p2 <- p2 + ggplot2::scale_y_sqrt()#scale_y_log10()
+p2 <- p2 + scale_color_manual(name = "", values = c("Poisson-Leroux" = "#C77CFF", "Poisson-spNNGP" = "#32CD32"))
+p2 <- p2 + ggplot2::labs(x = "True Contrast Value", y = "Estimated Standard Error of the Estimated Contrast", color = "Fitted Model")
+p2 <- p2 + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p2 <- p2 + ggplot2::facet_wrap(~ facet_label)
+p2 <- p2 + ggplot2::theme_bw()
+p2 <- p2 + ggplot2::theme(text = element_text(size = 20), legend.position = "bottom", strip.text = element_text(size = 12))
+
+p <- p1 + p2
+p
+ggplot2::ggsave(paste0(figure_path, "est_diff_contrast_val_and_se_all4.pdf"), p, width=14, height=9, units = "in", dpi = 300)
+```
+
+```{r}
+p_value_thresholds <- seq(0.0, 1.0, 0.01)
+roc_columns_groupby <- c("datagen_model", "fit_model", "gene",
+                         "changed_covariate", "baseline_contrast", "celltype", "facet_label")
+
+roc_at_val_df <- purrr::map_df(p_value_thresholds, function(thresh) {
+  
+  # Calculate FPR: Common to all signals within the metadata group
+  null_perf <- wald_df_all %>%
+    filter(true_contrast_value == 0) %>%
+    group_by(across(all_of(roc_columns_groupby))) %>%
+    summarise(
+      fpr = mean(wald_pval < thresh, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # Calculate TPR: Specific to each non-zero contrast value
+  signal_perf <- wald_df_all %>%
+    filter(true_contrast_value != 0) %>%
+    group_by(across(all_of(c(roc_columns_groupby, "true_contrast_value")))) %>%
+    summarise(
+      tpr = mean(wald_pval < thresh, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # Join them to create the ROC pairs for each contrast
+  inner_join(signal_perf, null_perf, by = roc_columns_groupby) %>%
+    mutate(threshold = thresh)
+})
+
+roc_misspec_at_val_df <- purrr::map_df(p_value_thresholds, function(thresh) {
+  
+  # Calculate FPR: Common to all signals within the metadata group
+  null_perf <- misspec_wald_df_all %>%
+    filter(true_contrast_value == 0) %>%
+    group_by(across(all_of(roc_columns_groupby))) %>%
+    summarise(
+      fpr = mean(wald_pval < thresh, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # Calculate TPR: Specific to each non-zero contrast value
+  signal_perf <- misspec_wald_df_all %>%
+    filter(true_contrast_value != 0) %>%
+    group_by(across(all_of(c(roc_columns_groupby, "true_contrast_value")))) %>%
+    summarise(
+      tpr = mean(wald_pval < thresh, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # Join them to create the ROC pairs for each contrast
+  inner_join(signal_perf, null_perf, by = roc_columns_groupby) %>%
+    mutate(threshold = thresh)
+})
+
+roc_all_at_val_df <- rbind(roc_at_val_df, roc_misspec_at_val_df)
+```
+
+```{r}
+plot_df <- roc_all_at_val_df %>%
+  dplyr::filter(changed_covariate == "GroupDKD:celltypeC_TAL") %>%
+  dplyr::filter(true_contrast_value %in% c(-0.5, 0.5)) %>%
+  dplyr::mutate(
+    # This creates a single string like "Poisson-Leroux (Contrast: 0.5)"
+    # You can adjust the formatting inside paste0 as you like
+    facet_label = paste0(datagen_model, ", Contrast: ", true_contrast_value),
+    # Ensure the factor order is preserved if needed
+    fit_model = forcats::fct_rev(fit_model)
+  )
+
+p <- ggplot2::ggplot(data = plot_df, mapping = ggplot2::aes(x = fpr, y = tpr, color = fit_model))
+p <- p + ggplot2::geom_line(linewidth=1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + ggplot2::facet_wrap(~facet_label)
+p <- p + ggplot2::scale_color_manual(values = model_color_vals)
+p <- p + ggplot2::labs(x = "Type I error", y = "Power", color = "Fitted Model")
+p <- p + ggplot2::guides(color = guide_legend(override.aes = list(linewidth = 5), reverse = TRUE))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size = 20), panel.spacing = unit(1.2, "lines"))
+p
+ggplot2::ggsave(paste0(figure_path, "roc_C_TAL_main.pdf"), p, width=12, height=8, units = "in", dpi = 300)
+```

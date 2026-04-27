@@ -1,0 +1,296 @@
+---
+title: "Real data results"
+subtitle: "Model fitting performance"
+author: "Florica"
+date: "2025-09-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE,
+                      message = FALSE)
+```
+
+```{r, warning = FALSE, message = FALSE}
+# Library
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(patchwork)
+
+# Paths
+processed_data_path <- "../../data/processed/"
+raw_data_path <- "../../data/raw/"
+figure_path <- "../../figures/real/model_performance/"
+
+# Model type
+glm_pattern_type <- "GLM_GAM"
+pattern_type <- "Leroux"
+
+# Read in kidney data
+seu_kid <- readRDS(paste0(processed_data_path, "seu_kidney.rds"))
+seu_kid@meta.data$sample <- seu_kid@meta.data$orig.ident
+
+# Read in pseudobulk results
+limma_df_all <-  readRDS(paste0(processed_data_path, "limma_voom_real_natgen_kidney.rds"))
+deseq2_df_all <-  readRDS(paste0(processed_data_path, "DESeq2_real_natgen_kidney.rds"))
+
+# Read in GLM model results
+glm_wald_df_all <- readRDS(paste0(processed_data_path, "glm_gam_model_results_waldstats_onlyinteract.rds"))
+glm_summary_out_all <- readRDS(paste0(processed_data_path, "glm_gam_model_results_perfsummary_onlyinteract.rds"))
+glm_summary_out_all <- glm_summary_out_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Poisson_GLM" = "Poisson GLM",
+                            "NB_GLM" = "NB GLM",
+                            "GAM" = "GAM"))
+
+# Read in model results
+wald_df_all <- readRDS(paste0(processed_data_path, "real_results_waldstats_", pattern_type, "_onlyinteract.rds"))
+#dim(wald_df_all)
+wald_df_all <- wald_df_all[!is.na(wald_df_all$wald_stat_t), ]
+#dim(wald_df_all)
+summary_out_all <- readRDS(paste0(processed_data_path, "real_results_perfsummary_", pattern_type, "_onlyinteract.rds"))
+# Add in diagnosis information
+summary_out_all <- dplyr::left_join(summary_out_all, dplyr::distinct(seu_kid@meta.data[, c("sample", "Group")]), by = "sample")
+summary_out_all <- summary_out_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Leroux" = "TESSERA-Leroux"))
+
+summary_out_all$Group <- factor(summary_out_all$Group, levels = c("Control", "HKD", "DKD"))
+summary_out_all$sample <- forcats::fct_reorder(summary_out_all$sample, as.numeric(summary_out_all$Group))
+
+df_out_all <- dplyr::bind_rows(summary_out_all, glm_summary_out_all)
+df_out_all$fit_model <- factor(df_out_all$fit_model, levels = c("TESSERA-Leroux", "Poisson GLM", "NB GLM", "GAM"))
+```
+
+```{r}
+cond_color_vals <- c("cornflowerblue", "goldenrod", "lightcoral")
+
+# Colors for models when using color and fill in ggplots
+model_color_vals <- c("TESSERA-Leroux" = "#800080", "TESSERA-CAR" = "hotpink4", "TESSERA-SAR" = "darkred", "TESSERA-spNNGP" = "#006400", "Poisson GLM" = "steelblue4", "NB GLM" =  "#00008B", "GAM" = "tan4")
+model_fill_vals <- c("TESSERA-Leroux" = "#C77CFF", "TESSERA-CAR" = "pink", "TESSERA-SAR" = "indianred1", "TESSERA-spNNGP" = "#32CD32", "Poisson GLM" = "lightblue", "NB GLM" =  "cornflowerblue", "GAM" = "burlywood")
+
+sample_color_vals <- c("#d62728","#1f77b4","#2ca02c","#ff7f0e","#9467bd","#8c564b","#e377c2",
+                       "#7f7f7f","#bcbd22","#17becf","#ff9896","#aec7e8","#98df8a","#ffbb78")
+```
+
+# Genes ordered by variance
+
+```{r}
+var_df <- data.frame(gene_idx = 1:nrow(seu_kid), gene = rownames(seu_kid@assays$RNA@features), var = apply(seu_kid@assays$RNA@layers$counts, 1, var))
+p <- ggplot2::ggplot(var_df, ggplot2::aes(x = gene_idx, y = var))
+p <- p + ggplot2::geom_point()
+p <- p + ggplot2::geom_vline(xintercept = 3000, color = "red", linetype = "dashed", linewidth = 1)
+p <- p + scale_y_continuous(trans="log10")
+p <- p + ggplot2::labs(x = "Gene Index", y = "Variance")
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+ggsave(paste0(figure_path, "sorted_log_variance.pdf"), p, width = 8, height=6, units = "in", dpi = 300)
+```
+
+\newpage
+
+# Fit quality performance metrics: Normalized MSE
+
+Normalized MSE: MSE / mean([counts]^2), where we define: 
+MSE: mean([counts - estimated counts]^2)
+
+```{r, eval = FALSE, fig.height=4, fig.width=7}
+# First plot: Normalized MSE for each sample; Each point corresponds to one gene-sample pair. The x-axis is clipped to (0, 2) to omit genes with low mean counts.
+
+# Second plot: Normalized MSE across all samples; Each point corresponds to one gene.
+
+# Normalized MSE counts
+p_samp <- ggplot2::ggplot(df_out_all, 
+                          ggplot2::aes(x = MSE_counts_total / Mean_counts2_total, 
+                                       color=fit_model, fill=fit_model))
+p_samp <- p_samp + ggplot2::geom_density()
+p_samp <- p_samp + ggplot2::labs(x = "Normalized MSE across all samples", y = "Density", color = "Model", fill = "Model")
+p_samp <- p_samp + ggplot2::scale_color_manual(values = model_color_vals, name = "Fitted Model")
+p_samp <- p_samp + ggplot2::scale_fill_manual(values = model_fill_vals, name = "Fitted Model")
+p_samp <- p_samp + ggplot2::theme_bw()
+p_samp <- p_samp + ggplot2::theme(text = element_text(size=20))
+p_samp
+```
+
+```{r, fig.height=4, fig.width=7}
+# Normalized MSE counts per sample
+p <- ggplot2::ggplot(df_out_all,  
+                     ggplot2::aes(x = MSE_counts_sample / Mean_counts2_sample, 
+                                  color=fit_model, fill=fit_model))
+p <- p + ggplot2::geom_density(alpha=0.3)
+p <- p + ggplot2::xlim(0, 2)
+p <- p + ggplot2::labs(x = "Normalized MSE per sample", y = "Density", color = "Model", fill = "Model")
+p <- p + ggplot2::scale_color_manual(values = model_color_vals, name = "Fitted Model")
+p <- p + ggplot2::scale_fill_manual(values = model_fill_vals, name = "Fitted Model")
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+ggsave(paste0(figure_path, "normalized_mse_per_sample.pdf"), p, width = 8, height=6, units = "in", dpi = 300)
+```
+
+```{r, eval = FALSE, fig.height=4, fig.width=7}
+# Fit quality performance metrics: Normalized MSE v. Moran's I
+
+# We examine how the MSE changes as a function of Moran's I(raw counts) on a per-sample basis. 
+# As we are fitting a spatial model, we see that the fit quality (Normalized MSE) is better for genes with greater spatial correlation. The y-axis is clipped to (0, 5) to omit genes with low mean counts.
+
+# MSE v. Moran counts
+p <- ggplot2::ggplot(df_out_all,
+                     aes(x = Moran_counts, y = MSE_counts_sample / Mean_counts2_sample))
+p <- p + ggplot2::facet_wrap(~fit_model)
+p <- p + ggplot2::geom_point(alpha = 0.5)
+p <- p + ggplot2::ylim(0, 5)
+p <- p + ggplot2::labs(x = "Moran's I of counts", y = "Normalized MSE")
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+```
+
+\newpage
+
+# Fit quality performance metrics: Moran's I of counts v. Moran's I of residuals
+
+We examine how the Moran's I of the raw counts compares to the Moran's I of the TESSERA Poisson-Leroux model residuals. 
+We see that almost all gene-sample pairs have a strong decrease in Moran's I for the model residuals. 
+Note that the expected value of Moran's I under the null hypothesis of no spatial autocorrelation is 1 / (Number of cells - 1). 
+
+```{r, fig.height=4, fig.width=7}
+# Moran counts v. Moran residuals
+p <- ggplot2::ggplot(df_out_all, 
+                     aes(x = Moran_counts, y = Moran_residuals - Moran_counts))
+p <- p + ggplot2::facet_wrap(~fit_model)
+p <- p + ggplot2::geom_point(alpha = 0.5)
+#p <- p + geom_hline(yintercept = 0, linewidth = 1, linetype = "dashed", color = "red")
+p <- p + ggplot2::labs(x = "Moran's I(counts)", y = "Moran's I(residuals) - Moran's I(counts)")
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+ggsave(paste0(figure_path, "morans_counts_v_morans_residuals.pdf"), p, width = 12, height=9, units = "in", dpi = 300)
+```
+
+\newpage
+
+# Exploratory plots: Model parameters
+
+We look at how the fitted $\widehat{\gamma}$ and $\widehat{\tau}^2$ parameters vary across sample-gene pairs. 
+We see that there is noticeable heterogeneity across samples. 
+
+```{r, fig.height=4, fig.width=7}
+# gamma_hat v. tau2_hat
+p <- ggplot2::ggplot(summary_out_all, aes(x = tau2_hat, y = gamma_hat, color=sample))
+p <- p + ggplot2::geom_point(alpha = 0.5)
+p <- p + ggplot2::scale_color_manual(values = sample_color_vals, name = "Condition")
+p <- p + ggplot2::labs(x=expression(widehat(tau^2)), y = expression(hat(gamma)), color = "Sample")
+p <- p + guides(color = guide_legend(override.aes = list(size = 5)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+ggsave(paste0(figure_path, "tau2_v_gamma.pdf"), p, width = 8, height=6, units = "in", dpi = 300)
+
+# gamma_hat per sample
+p1 <- ggplot2::ggplot(summary_out_all, aes(x = sample, y = gamma_hat, fill = Group))
+p1 <- p1 + ggplot2::geom_boxplot()
+p1 <- p1 + ggplot2::scale_fill_manual(values = cond_color_vals, name = "Condition")
+p1 <- p1 + ggplot2::labs(x="Sample", y = expression(hat(gamma)))
+p1 <- p1 + ggplot2::theme_bw()
+p1 <- p1 + ggplot2::theme(axis.text.x = element_text(angle = 90))
+p1 <- p1 + ggplot2::theme(text = element_text(size=20))
+ggsave(paste0(figure_path, "gamma_per_sample.pdf"), p1, width = 8, height=6, units = "in", dpi = 300)
+
+# tau2_hat per sample
+p2 <- ggplot2::ggplot(summary_out_all, aes(x = sample, y = tau2_hat, fill = Group))
+p2 <- p2 + ggplot2::geom_boxplot()
+p2 <- p2 + ggplot2::scale_fill_manual(values = cond_color_vals, name = "Condition")
+p2 <- p2 + ggplot2::labs(x="Sample", y = expression(widehat(tau^2)))
+p2 <- p2 + ggplot2::theme_bw()
+p2 <- p2 + ggplot2::theme(axis.text.x = element_text(angle = 90))
+p2 <- p2 + ggplot2::theme(text = element_text(size=20))
+ggsave(paste0(figure_path, "tau2_per_sample.pdf"), p2, width = 8, height=6, units = "in", dpi = 300)
+
+p3 <- p1 + p2 + plot_layout(guides = "collect") & theme(legend.position = "bottom", legend.title = element_blank())
+ggsave(paste0(figure_path, "gamma_and_tau2_per_sample.pdf"), p3, width = 10, height=6, units = "in", dpi = 300)
+```
+
+```{r, fig.height=4, fig.width=7}
+p
+```
+
+```{r, fig.height=4, fig.width=7}
+p1
+```
+
+```{r, fig.height=4, fig.width=7}
+p2
+```
+
+\newpage
+
+# Exploratory plots: Moran's I of model components
+
+We look at how the Moran's I of the spatial random effects $\widehat{\phi}$, the fixed effects $X \widehat{\beta}$, and $\widehat{\gamma}$ compare. 
+
+```{r, fig.height=4, fig.width=7}
+# gamma_hat v. Moran_phi
+p <- ggplot2::ggplot(summary_out_all, aes(x = gamma_hat, y = Moran_phi, color = sample))
+p <- p + ggplot2::geom_point(alpha = 0.5)
+p <- p + ggplot2::scale_color_manual(values = sample_color_vals, name = "Sample")
+p <- p + ggplot2::labs(x = expression(hat(gamma)), y = expression("Moran's I of " * phi), color = "Sample")
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+```
+
+\newpage
+
+We look at how the Moran's I of the spatial random effects $\widehat{\phi}$, the fixed effects $X \widehat{\beta}$, and the raw counts compare. 
+We see that the fixed effects $X \widehat{\beta}$ are more autocorrelated than the random effects, but that the random effects have a non-trivial autocorrelation. 
+Moreover, we see that a higher autocorrelation in the raw counts leads to a higher autocorrelation in the random effects. 
+
+```{r, fig.height=4, fig.width=7}
+# Moran_Xbeta v. Moran_phi
+df_long <- tidyr::pivot_longer(
+  summary_out_all,
+  cols = c(Moran_phi, Moran_Xbeta),
+  names_to = "Moran_type",
+  values_to = "Moran_value"
+)
+p <- ggplot2::ggplot(df_long, aes(x = sample, y = Moran_value, fill = Moran_type, color = Moran_type))
+p <- p + ggplot2::geom_boxplot()
+p <- p + labs(x = "Sample", y = "Moran's I", color = "Moran's I", fill = "Moran's I")
+p <- p + scale_color_manual(values=c("Moran_phi" = "purple4", "Moran_Xbeta" = "darkgreen"),
+                            labels = c("Moran_phi" = expression("Random effect, " * phi),
+                                       "Moran_Xbeta" = expression("Covariate effect, " * X * beta)))
+p <- p + scale_fill_manual(values=c("Moran_phi" = "plum", "Moran_Xbeta" = "lightgreen"),
+                            labels = c("Moran_phi" = expression("Random effect, " * phi),
+                                       "Moran_Xbeta" = expression("Covariate effect, " * X * beta)))
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(axis.text.x = element_text(angle = 90))
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+ggsave(paste0(figure_path, "moran_phi_and_moran_Xbeta.pdf"), p, width = 8, height=6, units = "in", dpi = 300)
+```
+
+```{r, eval = FALSE, fig.height=4, fig.width=7}
+# Moran_phi v. Moran_counts
+p <- ggplot2::ggplot(summary_out_all, aes(x = Moran_phi, y = Moran_counts, color=Group))
+p <- p + ggplot2::geom_point(alpha = 0.5)
+p <- p + ggplot2::scale_fill_manual(values = sample_color_vals)
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+```
+
+
+```{r, eval = FALSE}
+gene_order_df <- data.frame(gene=rownames(seu_kid), gene_var_order=1:nrow(seu_kid))
+plot_df <- merge(glm_wald_df_all, gene_order_df, by="gene")
+
+p <- ggplot2::ggplot(data=plot_df %>% dplyr::filter(contrast_description == "Fib:Control-DKD"), ggplot2::aes(x=gene_var_order, y=contrast_se))
+p <- p + ggplot2::facet_wrap(~fit_model)
+p <- p + ggplot2::geom_point()
+p <- p + ggplot2::scale_y_log10()
+p <- p + ggplot2::theme_bw()
+p 
+```

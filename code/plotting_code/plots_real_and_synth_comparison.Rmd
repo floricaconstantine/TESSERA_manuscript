@@ -1,0 +1,353 @@
+---
+title: "Synthetic and Real Data Results"
+subtitle: "Contrast Grouping: All"
+output: pdf_document
+date: "2026-03-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE)
+
+# Libraries
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+PVAL_THRESH <- 0.05
+
+# Paths
+processed_data_path <- "../../data/processed/"
+figure_path <- paste0("../../figures/power/")
+
+fdrtool_res <- readRDS(paste0(processed_data_path, "real_hyptest_fdrtool_fndr.rds"))
+nocutoff_res <- readRDS(paste0(processed_data_path, "real_hyptest_tessera.rds"))
+theo_res <- readRDS(paste0(processed_data_path, "real_hyptest_theoretical_chisq.rds"))
+
+prep_out <- readRDS(paste0(processed_data_path, "prepData_lattice_onlyinteract.rds"))
+contrast_names <- apply(prep_out$contrast_mat, 1, function (x) { paste(which(abs(x) > 0), collapse = "_") })
+contrast_names <- data.frame(contrast_description = names(contrast_names), contrast_indices = contrast_names)
+contrast_names$celltype <- sapply(contrast_names$contrast_description, function (x) { strsplit(x, ":")[[1]][1] })
+contrast_names$comparison <- sapply(contrast_names$contrast_description, function (x) { strsplit(x, ":")[[1]][2] })
+```
+
+
+```{r}
+# CREATE DATAFRAMES FOR REAL DATA
+
+tessera_wald_df <- dplyr::bind_rows(
+  "fdrtool_res" = fdrtool_res$tessera_wald_df, 
+  "tessera" = nocutoff_res$tessera_wald_df, 
+  "ch^2_1"     = theo_res$tessera_wald_df,
+  .id = "source"
+)
+
+pval_qq_df <- dplyr::bind_rows(
+  "fdrtool_res" = fdrtool_res$pval_qq_df, 
+  "tessera" = nocutoff_res$pval_qq_df, 
+  "ch^2_1"     = theo_res$pval_qq_df,
+  .id = "source"
+)
+pval_qq_df <- merge(pval_qq_df, contrast_names, by = "contrast_indices")
+
+wald_gene_nsig_df <- dplyr::bind_rows(
+  "fdrtool_res" = fdrtool_res$wald_gene_nsig_df, 
+  "tessera" = nocutoff_res$wald_gene_nsig_df, 
+  "ch^2_1"     = theo_res$wald_gene_nsig_df,
+  .id = "source"
+)
+wald_gene_nsig_df <- merge(wald_gene_nsig_df, contrast_names, by = "contrast_indices")
+```
+
+
+```{r}
+# LOAD IN SYNTHETIC DATA AND PROCESS
+
+synth_fdrtool_res <- readRDS(
+  paste0(
+    processed_data_path,
+    "synth_from_real_hyptest_fdrtool_fndr.rds"
+  )
+)
+synth_nocutoff_res <- readRDS(
+  paste0(
+    processed_data_path,
+    "synth_from_real_hyptest_tessera.rds"
+  )
+)
+synth_theo_res <- readRDS(
+  paste0(
+    processed_data_path,
+    "synth_from_real_hyptest_theoretical_chisq.rds"
+  )
+)
+
+
+synth_tessera_wald_df <- dplyr::bind_rows(
+  "fdrtool"   = synth_fdrtool_res$tessera_wald_df,
+  "tessera" = synth_nocutoff_res$tessera_wald_df,
+  "ch^2_1"     = synth_theo_res$tessera_wald_df,
+  .id = "source"
+)
+
+power_df <- dplyr::bind_rows(
+  "fdrtool"   = synth_fdrtool_res$power_df,
+  "tessera" = synth_nocutoff_res$power_df,
+  "ch^2_1"     = synth_theo_res$power_df,
+  .id = "source"
+)
+
+roc_df <- dplyr::bind_rows(
+  "fdrtool"   = synth_fdrtool_res$roc_df,
+  "tessera" = synth_nocutoff_res$roc_df,
+  "ch^2_1"     = synth_theo_res$roc_df,
+  .id = "source"
+)
+```
+
+```{r}
+# Power
+power_df <- power_df %>%
+  mutate(facet_label = case_when(
+    celltype == "Podo"        ~ "Podo (~ 40 cells per sample)",
+    celltype == "IC"          ~ "IC (~ 75 cells per sample)",
+    celltype == "GS_Stromal"  ~ "GS_Stromal (~ 165 cells per sample)",
+    celltype == "C_TAL"       ~ "C_TAL (~ 600 cells per sample)"
+  ))
+
+desired_order <- c(
+  "Podo (~ 40 cells per sample)",
+  "IC (~ 75 cells per sample)",
+  "GS_Stromal (~ 165 cells per sample)",
+  "C_TAL (~ 600 cells per sample)"
+)
+
+power_df$facet_label <- factor(power_df$facet_label, levels = desired_order)
+
+# ROC
+roc_df <- roc_df %>%
+  mutate(facet_label = case_when(
+    celltype == "Podo"        ~ "Podo (~ 40 cells per sample)",
+    celltype == "IC"          ~ "IC (~ 75 cells per sample)",
+    celltype == "GS_Stromal"  ~ "GS_Stromal (~ 165 cells per sample)",
+    celltype == "C_TAL"       ~ "C_TAL (~ 600 cells per sample)"
+  ))
+
+desired_order <- c(
+  "Podo (~ 40 cells per sample)",
+  "IC (~ 75 cells per sample)",
+  "GS_Stromal (~ 165 cells per sample)",
+  "C_TAL (~ 600 cells per sample)"
+)
+
+roc_df$facet_label <- factor(roc_df$facet_label, levels = desired_order)
+```
+
+# Results on a single gene, IGHG2, with counts generated from a Poisson-Leroux distribution
+
+```{r, fig.height = 10, fig.width = 12}
+# Power
+synth_tessera_wald_df_leroux <- synth_tessera_wald_df %>% dplyr::filter(datagen_model == "Leroux")
+power_df_leroux <- power_df %>% dplyr::filter(datagen_model == "Leroux")
+roc_df_leroux <- roc_df %>% dplyr::filter(datagen_model == "Leroux")
+
+p <- ggplot(data = power_df_leroux, mapping = aes(x = true_contrast_value, y = p_rej, color = factor(source)))
+p <- p + facet_wrap(~ facet_label)
+p <- p + geom_line(linewidth = 1)
+#p <- p + geom_hline(yintercept = 0.05, color = "red", linetype = "dashed")
+p <- p + scale_color_manual(values=c("tessera" = "purple", "fdrtool" = "orange", "ch^2_1" = "darkgreen"), 
+                            labels = c("ch^2_1"  = expression(paste("Theoretical ", chi[1]^2)), "fdrtool" = "fdrtool", "tessera" = "TESSERA-Leroux"))
+p <- p + labs(x = "Contrast Value", y = "Probabilty of Rejection", color="Method")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20), legend.position = "bottom", legend.title = element_blank())
+p
+ggplot2::ggsave(paste0(figure_path, "datagen_Leroux/power_emp_theo.pdf"), p, width = 12, height=9, units = "in", dpi = 300)
+```
+
+```{r, fig.height = 10, fig.width = 12}
+# Type I Error
+p <- ggplot(data = roc_df_leroux, mapping = aes(x = threshold, y = fpr, color = factor(source)))
+p <- p + facet_wrap(~ facet_label)
+p <- p + geom_line(linewidth = 1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + scale_color_manual(values=c("tessera" = "purple", "fdrtool" = "orange", "ch^2_1" = "darkgreen"),
+                            labels = c("ch^2_1"  = expression(paste("Theoretical ", chi[1]^2)), "fdrtool" = "fdrtool", "tessera" = "TESSERA-Leroux"))
+p <- p + labs(x = "p-value threshold", y = "Type I Error", color="Method")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20), legend.position = "bottom", legend.title = element_blank())
+p
+ggplot2::ggsave(paste0(figure_path, "datagen_Leroux/type1_error_emp_theo.pdf"), p, width = 12, height=9, units = "in", dpi = 300)
+```
+
+# Results on a single gene, IGHG2, with counts generated from a Poisson-spNNGP distribution
+
+```{r, fig.height = 10, fig.width = 12}
+# Power
+synth_tessera_wald_df_spNNGP <- synth_tessera_wald_df %>% dplyr::filter(datagen_model == "spNNGP")
+power_df_spNNGP <- power_df %>% dplyr::filter(datagen_model == "spNNGP")
+roc_df_spNNGP <- roc_df %>% dplyr::filter(datagen_model == "spNNGP")
+
+p <- ggplot(data = power_df_spNNGP, mapping = aes(x = true_contrast_value, y = p_rej, color = factor(source)))
+p <- p + facet_wrap(~ facet_label)
+p <- p + geom_line(linewidth = 1)
+p <- p + geom_hline(yintercept = 0.05, color = "red", linetype = "dashed")
+p <- p + scale_color_manual(values=c("tessera" = "purple", "fdrtool" = "orange", "ch^2_1" = "darkgreen"),
+                            labels = c("ch^2_1"  = expression(paste("Theoretical ", chi[1]^2)), "fdrtool" = "fdrtool", "tessera" = "TESSERA-Leroux"))
+p <- p + labs(x = "Contrast Value", y = "Probabilty of Rejection", color="Method")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20), legend.position = "bottom", legend.title = element_blank())
+p
+ggplot2::ggsave(paste0(figure_path, "datagen_spNNGP/power_emp_theo.pdf"), p, width = 12, height=9, units = "in", dpi = 300)
+```
+
+```{r, fig.height = 10, fig.width = 12}
+# Type I Error
+p <- ggplot(data = roc_df_spNNGP, mapping = aes(x = threshold, y = fpr, color = factor(source)))
+p <- p + facet_wrap(~ facet_label)
+p <- p + geom_line(linewidth = 1)
+p <- p + ggplot2::geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1)
+p <- p + scale_color_manual(values=c("tessera" = "purple", "fdrtool" = "orange", "ch^2_1" = "darkgreen"), 
+                            labels = c("ch^2_1"  = expression(paste("Theoretical ", chi[1]^2)), "fdrtool" = "fdrtool", "tessera" = "TESSERA-Leroux"))
+p <- p + labs(x = "p-value threshold", y = "Type I Error", color="Method")
+p <- p + ggplot2::guides(color = guide_legend(byrow = TRUE, override.aes = list(linewidth = 5)))
+p <- p + theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20), legend.position = "bottom", legend.title = element_blank())
+p
+ggplot2::ggsave(paste0(figure_path, "datagen_spNNGP/type1_error_emp_theo.pdf"), p, width = 12, height=9, units = "in", dpi = 300)
+```
+
+# Real data results from fitting a Poisson-Leroux model
+
+```{r, fig.height = 15, fig.width = 18}
+# Number of significant genes (facet by method)
+p <- ggplot2::ggplot(wald_gene_nsig_df, ggplot2::aes(x = celltype, 
+                                                          y = n_sig_genes,
+                                                          fill = comparison
+                                             ))
+p <- p + ggplot2::geom_col(position = position_dodge(preserve = "single", width = 0.9), width = 0.8)
+p <- p + ggplot2::scale_fill_manual(values=c("cornflowerblue", "goldenrod", "lightcoral"))
+p <- p + ggplot2::labs(x = "Cell Type",
+                       y = "Number of significant genes (FDR < 0.05)",
+                       fill = "Comparison"
+                       )
+p <- p + ggplot2::facet_wrap(~source, scales = "free_y", ncol=2)
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=30))
+p <- p + ggplot2::theme(axis.text.x = element_text(size = 20, angle = 90, hjust = 1, vjust=0.5))
+p
+```
+
+```{r, fig.height = 15, fig.width = 18}
+# Number of significant genes (facet by method)
+p <- ggplot2::ggplot(wald_gene_nsig_df, ggplot2::aes(x = celltype, 
+                                                          y = n_sig_genes,
+                                                          fill = source
+                                             ))
+p <- p + ggplot2::geom_col(position = position_dodge(preserve = "single", width = 0.9), width = 0.8)
+p <- p + ggplot2::scale_fill_manual(values=c("darkgreen", "orange", "purple")) #"cornflowerblue", 
+p <- p + ggplot2::labs(x = "Cell Type",
+                       y = "Number of significant genes (FDR < 0.05)",
+                       fill = "Method"
+                       )
+p <- p + ggplot2::facet_wrap(~comparison, scales = "free_y", ncol=2)
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=30))
+p <- p + ggplot2::theme(axis.text.x = element_text(size = 20, angle = 90, hjust = 1, vjust=0.5))
+p
+```
+
+
+```{r}
+# # ECDF of Wald statistics
+# p <- ggplot2::ggplot(data = ecdf_res$ecdf_df, mapping = ggplot2::aes(x = wald_F, y = y_ecdf))
+# p <- p + ggplot2::geom_line(color = "black", linewidth = 1.5)
+# p <- p + ggplot2::scale_x_continuous(trans = "log10")
+# # # ECDF line: Mapping color to a string "ecdf"
+# # p <- p + ggplot2::geom_vline(data = ecdf_res$inflection_results,
+# #                     mapping = ggplot2::aes(xintercept = inflection_wald, color = "ecdf"), 
+# #                     linetype = "dashed",
+# #                     linewidth = 1.2)
+# # Nocutoff line: Mapping color to a string "nocutoff"
+# p <- p + ggplot2::geom_vline(data = dplyr::distinct(nocutoff_res$wald_df_all[, c("contrast_indices", "wald_thresh")]),
+#                     mapping = ggplot2::aes(xintercept = wald_thresh, color = "nocutoff"), 
+#                     linetype = "dashed",
+#                     linewidth = 1.2)
+# # Manually define the colors and labels for the legend
+# p <- p + ggplot2::scale_color_manual(name = "Method", 
+#                                      values = c("ecdf" = "cornflowerblue", "nocutoff" = "purple"))
+# p <- p + ggplot2::labs(x = "Wald statistic", y = "ECDF")
+# p <- p + ggplot2::theme_bw()
+# p <- p + ggplot2::theme(text = ggplot2::element_text(size=20), legend.position="none")
+# p
+```
+
+```{r}
+# Distribution of p-values
+plot_data <- pval_qq_df %>% dplyr::filter(source == "tessera")
+p <- ggplot(data = plot_data, mapping = aes(x = theoretical, y = observed, color = factor(source)))
+p <- p + geom_line(linewidth = 1.2)
+p <- p + geom_abline(slope = 1, intercept = 0, color = "black", linetype = "dashed")
+p <- p + scale_color_manual(values=c("purple"))
+p <- p + labs(x = "Uniform[0, 1]", y = "Estimated p-values", color="Method")
+p <- p + theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20), legend.position="none")
+p
+```
+
+```{r}
+plot_data <- nocutoff_res$fit_results_df %>%
+  mutate(Raw_RMSE = sqrt(Raw_MSE)) %>%
+  tidyr::pivot_longer(
+    cols = c(Raw_RMSE, Raw_MAE, Raw_MedAE, Raw_MaxAE), 
+    names_to = "Error_Type", 
+    values_to = "Error_Value"
+  ) %>%
+  mutate(Error_Type = gsub("Raw_", "", Error_Type))
+
+p <- ggplot(plot_data, aes(x = threshold, y = Error_Value, color = Error_Type))
+p <- p + geom_line(linewidth = 1)
+p <- p + geom_point()
+p <- p + ggplot2::geom_vline(data = distinct(nocutoff_res$wald_df_all[, c("contrast_indices", "wald_thresh")]),
+                             mapping = ggplot2::aes(xintercept=wald_thresh), 
+                             color = "black",
+                             linetype = "dashed",
+                             linewidth = 1) 
+p <- p + scale_x_continuous(trans = "log10")
+p <- p + labs(x = "Threshold", y = "Error", color = "Metric")
+p <- p + theme_bw()
+p <- p + theme(text = element_text(size = 20))
+p
+```
+
+```{r}
+# Scale parameter
+p <- ggplot(data = nocutoff_res$fit_results_df, mapping = aes(x = threshold, y = scale))
+p <- p + geom_line(linewidth = 1.2)
+p <- p + ggplot2::geom_vline(data = distinct(nocutoff_res$wald_df_all[, c("contrast_indices", "wald_thresh")]),
+                             mapping = ggplot2::aes(xintercept=wald_thresh), 
+                             color = "purple",
+                             linetype = "dashed",
+                             linewidth = 1.2) 
+p <- p + labs(x = "Threshold", y = "Scale Parameter")
+p <- p + theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+```
+
+```{r}
+# Shift parameter
+p <- ggplot(data = nocutoff_res$fit_results_df, mapping = aes(x = threshold, y = shift))
+p <- p + geom_line(linewidth = 1.2)
+p <- p + ggplot2::geom_vline(data = distinct(nocutoff_res$wald_df_all[, c("contrast_indices", "wald_thresh")]),
+                             mapping = ggplot2::aes(xintercept=wald_thresh), 
+                             color = "purple",
+                             linetype = "dashed",
+                             linewidth = 1.2) 
+p <- p + labs(x = "Threshold", y = "Shift Parameter")
+p <- p + theme_bw()
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+```

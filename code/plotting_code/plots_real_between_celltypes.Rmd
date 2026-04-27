@@ -1,0 +1,663 @@
+---
+title: "Real data results: Marker genes for cell types"
+subtitle: "Cell type comparison: PT_S1 v. C_TAL"
+author: "Florica"
+date: "2025-09-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE,
+                      message = FALSE)
+```
+
+Supplementary table 5 of "An atlas of healthy and injured cell states and niches in the human kidney" by Lake et. al., contains a list of marker genes for major kidney cell types. 
+We map these kidney cell types to the kidney cell types present in our data. 
+In particular, we find marker genes for the cell types "C_TAL" (cortical thick ascending limb of Henle) and "PT_S1" (proximal tubule segment 1). 
+These two cell types are well represented in our data as they have a high number of cells across all samples. 
+With our subsequent analyses we aim not to discover any new biology findings, but rather to perform a "sanity check" that our algorithm performs as expected. 
+In particular, we test to see which genes are differentially expressed between "C_TAL" cells and "PT_S1" cells within each of the three kidney conditions (Control, HKD, and DKD). 
+The marker genes should have large test statistics and thus be highly statistically significant in this analysis. 
+Additionally, as we are studying marker genes, standard non-spatial GLM models should also find similar results and rank the same marker genes as highly statistically significant.
+
+Concretely, we focus on the top 3000 genes, ranked by variance. 
+We run both the TESSERA algorithm, with the Poisson-Leroux model, and non-spatial generalized linear models (Poisson and Negative Binomial GLMs) on the same set of genes.
+For each gene, we fit a model with fixed effects for the interaction of cell-type and disease, no main effects, and no intercept, and fixed effects for sample that are nested within disease; note that this model is exactly equivalent to the model with traditional main effects for cell-type and disease, an intercept, and interactions, and that the results are identical across both models. 
+
+Concretely, we test 
+$H_0: \beta_{C\_TAL, \textrm{condition}} == \beta_{PT\_S1, \textrm{condition}}$,
+$H_1: \beta_{C\_TAL, \textrm{condition}} \neq \beta_{PT\_S1, \textrm{condition}}$,
+for each condition.
+We construct a Wald test statistic and use our threshold/fitting procedure to obtain p-values. 
+In this case, the contrasts of interest are simply differences between the two entries of $\beta$. 
+
+In this setting, in an interaction-only model, the contrasts we test are
+$\beta_{C\_TAL, \textrm{condition}} - \beta_{PT\_S1, \textrm{condition}} == 0$ 
+for each condition. 
+In a model with main effects, an intercept, and a reference level, we would test
+$(\beta_{\textrm{intercept}} + \beta_{\textrm{condition}} + \beta_{C\_TAL} + \beta_{C\_TAL, \textrm{condition}}) - (\beta_{\textrm{intercept}} + \beta_{\textrm{condition}} + \beta_{PT\_S1} + \beta_{PT\_S1, \textrm{condition}}) = (\beta_{C\_TAL} + \beta_{C\_TAL, \textrm{condition}}) - (\beta_{PT\_S1} + \beta_{PT\_S1, \textrm{condition}}) == 0$.
+
+Both of these models are equivalent, in that we may uniquely isolate any combination of cell-type and condition with different linear combinations of the entries of $\beta$.
+If the condition or "C_TAL" were reference levels above, we would simply drop those terms in the contrast equation above, e.g., if Control were the condition and Control and "C_TAL" were reference levels, we would write
+$(\beta_{PT\_S1})== 0$
+for the contrast;
+however, if the condition were DKD instead, we would write
+$(\beta_{C\_TAL, \textrm{DKD}}) - (\beta_{PT\_S1} + \beta_{PT\_S1, \textrm{DKD}}) == 0$.
+
+Moreover, fitting both models on the data, for both the GLM models and the Poisson-Leroux models, leads to identical residuals, identical contrast values, and identical Wald statistics, as expected. 
+The advantage of the interaction-only model is the simplicity of forming contrasts for the questions of interest here, as the lack of reference levels simplifies interpretation. 
+
+```{r}
+# Library
+library(openxlsx)
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(patchwork)
+library(TESSERA)
+
+# Paths
+processed_data_path <- "../../data/processed/"
+raw_data_path <- "../../data/raw/"
+figure_path <- "../../figures/real/DE_marker_genes/"
+
+# Model type
+glm_pattern_type <- "GLM"
+pattern_type <- "Leroux"
+
+# Read in kidney data
+seu_kid <- readRDS(paste0(processed_data_path, "seu_kidney.rds"))
+seu_kid <- seu_kid[1:3000, ]
+
+# Read in pseudobulk results
+limma_df_all <- readRDS(paste0(processed_data_path, "limma_voom_real_markergene_natgen_kidney.rds"))
+deseq2_df_all <- readRDS(paste0(processed_data_path, "DESeq2_real_markergene_natgen_kidney.rds"))
+
+# Rename models
+limma_df_all <- limma_df_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "limma_voom" = "limma-voom"))
+
+# Read in GLM model results
+glm_wald_df_all <- readRDS(paste0(processed_data_path, "glm_gam_model_results_waldstats_markergene_onlyinteract.rds")) 
+# Handle missing columns
+glm_wald_df_all$contrast_description <- glm_wald_df_all$contrast_name
+if (!("fit_model" %in% colnames(glm_wald_df_all))) {
+  glm_wald_df_all$fit_model <- glm_wald_df_all$model
+}
+# Rename models
+glm_wald_df_all <- glm_wald_df_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Poisson_GLM" = "Poisson GLM",
+                            "NB_GLM" = "NB GLM",
+                            "GAM" = "GAM"))
+
+# Add in p-values and adjusted p-values
+glm_wald_df_all$wald_pval <- pchisq(glm_wald_df_all$wald_stat_t^2, df = 1, lower.tail = FALSE)
+glm_wald_df_all$wald_pval_adj <- NA
+for (fm in unique(glm_wald_df_all$fit_model)) {
+  for (cd in unique(glm_wald_df_all$contrast_description)) {
+    row_idx <- which((glm_wald_df_all$fit_model == fm) & (glm_wald_df_all$contrast_description == cd))
+    glm_wald_df_all$wald_pval_adj[row_idx] <- p.adjust(glm_wald_df_all$wald_pval[row_idx], method = "BH")
+  }
+}
+
+# Read in TESSERA results from fitting all genes and contrasts FOR WITHIN CELL TYPE
+# Just to get parameters
+wald_df_all <- readRDS(paste0(processed_data_path, "real_hyptest_tessera_between_celltypes.rds"))
+wald_df_all <- wald_df_all$wald_df_all
+# Drop old, redundant columns
+#wald_df_all <- select(wald_df_all, -c("wald_scaling", "wald_shift"))
+# Rename models
+wald_df_all <- wald_df_all %>%
+  mutate(fit_model = recode(fit_model,
+                            "Leroux" = "TESSERA-Leroux"))
+
+```
+
+```{r}
+# Adjust p-values per contrast to match TESSERA/GLMs/GAM
+
+# Limma
+for (cd in unique(limma_df_all$contrast_description)) {
+    row_idx <- which(limma_df_all$contrast_description == cd)
+    limma_df_all$pval_adj[row_idx] <- p.adjust(limma_df_all$P.Value[row_idx], method = "BH")
+}
+# DESeq2
+for (cd in unique(deseq2_df_all$contrast_description)) {
+    row_idx <- which(deseq2_df_all$contrast_description == cd)
+    deseq2_df_all$pval_adj[row_idx] <- p.adjust(deseq2_df_all$pvalue[row_idx], method = "BH")
+}
+```
+
+```{r}
+# Colors for models when using color and fill in ggplots
+model_color_vals <- c("TESSERA-Leroux" = "#800080", "TESSERA-CAR" = "hotpink4", "TESSERA-SAR" = "darkred", "TESSERA-spNNGP" = "#006400", "DESeq2" = "darkorange", "limma-voom" = "goldenrod1", "Poisson GLM" = "steelblue4", "NB GLM" =  "#00008B", "GAM" = "tan4")
+model_fill_vals <- c("TESSERA-Leroux" = "#C77CFF", "TESSERA-CAR" = "pink", "TESSERA-SAR" = "indianred1", "TESSERA-spNNGP" = "#32CD32", "DESeq2" = "darkorange", "limma-voom" = "goldenrod1", "Poisson GLM" = "lightblue", "NB GLM" =  "cornflowerblue", "GAM" = "burlywood")
+```
+
+\newpage
+
+# Marker genes
+
+```{r}
+df_markergenes <- read.xlsx(paste0(raw_data_path, "2021-07-12390D-Supplementary Table 5.xlsx"), startRow=6, skipEmptyCols = TRUE, sheet = 1)
+
+# Marker genes
+
+df_map_broad <- data.frame(Subclass.Level.1 = c("PT", "TAL", "DCT", "CNT", "PC", "IC", 
+                                                "EC", "VSM/P", "FIB", "IMM"),
+                           Subclass.Level.3 = c(NA, NA, NA, NA, NA, NA, NA, NA, NA, NA)
+                           )
+df_map_broad <- merge(df_map_broad, df_markergenes[, c("Subclass.Level.1", "Subclass.Level.3", "Positive.Markers")], by = c("Subclass.Level.1", "Subclass.Level.3"))
+
+
+df_map <- data.frame(celltype = c("Fib", "CD4T", "MyoFib", "iPT", "VSMC/Pericyte", 
+                                  "GS_Stromal", "Mono", "C_TAL", "CNT", "PT_S1", "PC", "PT_S3", 
+                                  "IC", "Plasma_Cells", "Endo_G", "PEC", "DCT", "Podo", 
+                                  "Dedifferentiated_Tubule", "Mes", "Mac", "Endo_Peritubular", 
+                                  "Endo_Lym", "PT_S2", "M_TAL", "RBC"),
+                     Subclass.Level.3 = c("FIB", "T", "MYOF", NA, "VSMC/P",
+                                          NA, NA, "C-TAL", "CNT", "PT-S1", NA, "PT-S3",
+                                          NA, "PL", "EC-GC", "PEC", NA, "POD",
+                                          NA, "MC", NA, "EC-PTC",
+                                          "EC-LYM", "PT-S2", "M-TAL", NA),
+                     Subclass.Level.1 = c("FIB", "IMM", "FIB", NA, "VSM/P",
+                                          NA, NA, "TAL", "CNT", "PT", "PC", "PT",
+                                          "IC", "IMM", "EC", "PEC", "DCT", "POD", 
+                                          NA, "VSM/P", NA, "EC",
+                                          "EC", "PT", "TAL", NA)
+                     )
+df_map <- df_map[!(is.na(df_map$Subclass.Level.1) & is.na(df_map$Subclass.Level.3)), ]
+
+df_map <- merge(df_map, df_markergenes[, c("Subclass.Level.1", "Subclass.Level.3", "Positive.Markers")], by = c("Subclass.Level.1", "Subclass.Level.3"))
+df_map <- df_map %>%
+  group_by(Subclass.Level.1, Subclass.Level.3, celltype) %>%
+  summarise(Positive.Markers = paste(Positive.Markers, collapse = ", "), .groups = "drop")
+df_map$Positive.Markers <- gsub(",,", ", ", df_map$Positive.Markers)
+
+df_map_fin <- merge(df_map, df_map_broad[, c("Subclass.Level.1", "Positive.Markers")],
+                    by = "Subclass.Level.1", all.x=TRUE)
+df_map_fin$Positive.Markers <- paste0(df_map_fin$Positive.Markers.y, ", ", df_map_fin$Positive.Markers.x)
+df_map_fin <- df_map_fin[, -which(colnames(df_map_fin) %in% c("Positive.Markers.x", "Positive.Markers.y"))]
+write.csv(df_map_fin, paste0(processed_data_path, "marker_genes.csv"), row.names=FALSE)
+```
+
+```{r}
+paper_mg <- c("EMCN", "PLVAP", "ALB", "PDGFRA", "C7", "COL1A1", "SERPINE1", "ACTA2", "SYNPO2", "MYH11", "ITGB6", "IGFBP6", "CFH", "WT1", "NPHS1", "SLC22A8", "SLC4A4", "SLC7A13", "HAVCR1", "VCAM1", "SLC34A2", "SLC12A1", "SIM2", "SLC12A3", "HSD11B2", "AQP2", "SLC26A7", "ATP6V0D2", "JCHAIN", "CD96", "LYZ", "C1QA", "HBA2")
+```
+
+We begin by visualizing all of the cell-types and all marker genes. 
+There is some degree of patterning/signal present where we see there are groups of genes that are highly expressed in a particular cell type(s) but not the rest.
+
+```{r, fig.height=15, fig.width=20}
+df_map_fin <- read.csv(paste0(processed_data_path, "marker_genes.csv"))
+pos_mark <- paste(df_map_fin$Positive.Markers, collapse = ", ")
+pos_mark <- trimws(unlist(strsplit(pos_mark, ",")))
+
+seu_obj <- seu_kid[, which(seu_kid@meta.data$celltype %in% df_map_fin$celltype)]
+seu_obj$celltype <- factor(seu_obj$celltype, levels = df_map_fin$celltype)
+seu_obj <- seu_obj[unique(pos_mark), ]
+seu_obj <- Seurat::NormalizeData(seu_obj)
+
+p1 <- Seurat::DotPlot(object = seu_obj,
+                      features = unique(pos_mark), group.by = "celltype", scale = TRUE)
+p1 <- p1 + labs(x = "Marker Gene", y = "Cell Type")
+p1 <- p1 + ggplot2::theme(text = ggplot2::element_text(size = 25))
+p1 <- p1 + ggplot2::theme(axis.text.x = ggplot2::element_text(size = 8, angle = 90, vjust = 0.5, hjust=1))
+p1 <- p1 + ggplot2::theme(axis.text.y = ggplot2::element_text(size = 20))
+p1
+ggsave(paste0(figure_path, "marker_genes.pdf"), p1, width = 20, height=16, units = "in", dpi = 300)
+```
+
+```{r}
+for(c_idx in 1:length(unique(df_map_fin$celltype))){
+  mg <- as.character(df_map_fin[which(df_map_fin$celltype == unique(df_map_fin$celltype)[c_idx]), "Positive.Markers"])
+  mg <- trimws(unlist(strsplit(mg, ",")))
+  mg <- unique(mg)
+#  seu_kid@meta.data$celltype <- factor(seu_kid@meta.data$celltype)
+#  levels(seu_kid@meta.data$celltype) <- c(setdiff(levels(seu_kid@meta.data$celltype), unique(df_map_fin$celltype)[c_idx]), unique(df_map_fin$celltype)[c_idx])
+  
+  p1 <- Seurat::DotPlot(object = seu_kid[, which(seu_kid@meta.data$celltype %in% unique(df_map_fin$celltype))], features = mg[mg %in% rownames(seu_kid)], group.by = "celltype")
+  p1 <- p1 + ggplot2::theme(text = ggplot2::element_text(size = 20))
+  p1 <- p1 + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust=1))
+  ggsave(paste0(figure_path, "indiv_ctyp_mg/marker_genes_", gsub("/", "_", unique(df_map_fin$celltype)[c_idx]), ".pdf"), p1, width = 12, height=9, units = "in", dpi = 300)
+}
+```
+
+```{r, fig.height=8, fig.width=10}
+pt_mg <- as.character(df_map_fin[which(df_map_fin$celltype == "PT_S1"), "Positive.Markers"])
+pt_mg <- unique(trimws(unlist(strsplit(pt_mg, ","))))
+
+ctal_mg <- as.character(df_map_fin[which(df_map_fin$celltype == "C_TAL"), "Positive.Markers"])
+ctal_mg <- unique(trimws(unlist(strsplit(ctal_mg, ","))))
+
+mg <- c(pt_mg, ctal_mg)
+
+p1 <- Seurat::DotPlot(object = seu_kid[, which(seu_kid@meta.data$celltype %in% unique(df_map_fin$celltype))], features = mg[mg %in% rownames(seu_kid)], group.by = "celltype")
+p1 <- p1 + geom_rect(aes(xmin = 0, xmax = length(pt_mg) + 0.5, ymin = 16.5, ymax = 17.5), color = "red", fill = NA, size = 1)
+p1 <- p1 + geom_rect(aes(xmin = length(pt_mg) + 0.5, xmax = length(mg) + 0.5, ymin = 0.5, ymax = 1.5), color = "red", fill = NA, size = 1)
+p1 <- p1 + labs(x = "Marker Gene", y = "Cell Type")
+p1 <- p1 + ggplot2::theme(text = ggplot2::element_text(size = 20))
+p1 <- p1 + ggplot2::theme(axis.text.x = ggplot2::element_text(size = 20, angle = 90,
+                                                              vjust = 0.5, hjust=1))
+p1 <- p1 + ggplot2::theme(axis.text.y = ggplot2::element_text(size = 20))
+p1
+ggsave(paste0(figure_path, "marker_genes_ctal_pt_allctyp.pdf"), p1, width = 12, height=9, units = "in", dpi = 300)
+```
+
+\newpage
+
+We next subset to just the two cell-types of interest, PT_S1 and C_TAL. 
+Here, we can see that for most of the PT_S1 marker genes, we should hope to find a signal, and the same for the C_TAL genes. 
+
+```{r}
+pt_mg <- as.character(df_map_fin[which(df_map_fin$celltype == "PT_S1"), "Positive.Markers"])
+pt_mg <- unique(trimws(unlist(strsplit(pt_mg, ","))))
+
+ctal_mg <- as.character(df_map_fin[which(df_map_fin$celltype == "C_TAL"), "Positive.Markers"])
+ctal_mg <- unique(trimws(unlist(strsplit(ctal_mg, ","))))
+
+mg <- c(pt_mg, ctal_mg)
+mg <- mg[mg %in% rownames(seu_kid)]
+mg_all <- mg
+
+seu_obj <- seu_kid[, which(seu_kid@meta.data$celltype %in% c("PT_S1", "C_TAL"))]
+seu_obj <- seu_obj[mg[mg %in% rownames(seu_kid)], ]
+seu_obj <- seu_obj[unique(pos_mark), ]
+seu_obj <- Seurat::NormalizeData(seu_obj)
+
+p1 <- Seurat::DotPlot(object = seu_obj, features = mg, group.by = "celltype", scale=TRUE)
+p1 <- p1 + labs(x = "Marker Gene", y = "Cell Type")
+p1 <- p1 + geom_rect(aes(xmin = 0, xmax = length(pt_mg) + 0.5, ymin = 1.5, ymax = 2.5), color = "red", fill = NA, size = 1)
+p1 <- p1 + geom_rect(aes(xmin = length(pt_mg) + 0.5, xmax = length(mg) + 0.5, ymin = 0.5, ymax = 1.5), color = "red", fill = NA, size = 1)
+p1 <- p1 + ggplot2::theme(text = ggplot2::element_text(size = 15))
+p1 <- p1 + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90,
+                                                              vjust = 0.5, hjust=1))
+p1
+ggsave(paste0(figure_path, "marker_genes_ctal_pt.pdf"), p1, width = 8, height=6, units = "in", dpi = 300)
+```
+
+```{r}
+# Ranks
+wald_df_all$gene_rank <- NA
+for (mv in unique(wald_df_all$fit_model)) {
+  for (cd in unique(wald_df_all$contrast_description)) {
+    tmp_idx <- which((wald_df_all$fit_model == mv) & (wald_df_all$contrast_description == cd))
+    wald_df_all$gene_rank[tmp_idx] <- length(tmp_idx) - rank(wald_df_all$wald_stat_t[tmp_idx]^2) + 1
+  }
+}
+
+glm_wald_df_all$gene_rank <- NA
+for (mv in unique(glm_wald_df_all$fit_model)) {
+  for (cd in unique(glm_wald_df_all$contrast_description)) {
+    tmp_idx <- which((glm_wald_df_all$fit_model == mv) & (glm_wald_df_all$contrast_description == cd))
+    glm_wald_df_all$gene_rank[tmp_idx] <- length(tmp_idx) - rank(glm_wald_df_all$wald_stat_t[tmp_idx]^2) + 1
+  }
+}
+
+limma_df_all$gene_rank <- NA
+for (mv in unique(limma_df_all$fit_model)) {
+  for (cd in unique(limma_df_all$contrast_description)) {
+    tmp_idx <- which((limma_df_all$fit_model == mv) & (limma_df_all$contrast_description == cd))
+    limma_df_all$gene_rank[tmp_idx] <- length(tmp_idx) - rank(abs(limma_df_all$t[tmp_idx])) + 1
+  }
+}
+
+deseq2_df_all$gene_rank <- NA
+for (mv in unique(deseq2_df_all$fit_model)) {
+  for (cd in unique(deseq2_df_all$contrast_description)) {
+    tmp_idx <- which((deseq2_df_all$fit_model == mv) & (deseq2_df_all$contrast_description == cd))
+    deseq2_df_all$gene_rank[tmp_idx] <- length(tmp_idx) - rank(abs(deseq2_df_all$stat[tmp_idx])) + 1
+  }
+}
+```
+
+```{r}
+# Count number of significant genes per contrast
+PVAL_THRESH <- 0.05
+id_cols <- c("fit_model", 
+             "kernel_type", 
+             #"contrast_string", 
+             "contrast_indices", 
+             "contrast_description"
+             )
+wald_gene_nsig_df <- data.frame(
+  wald_df_all
+  %>% dplyr::group_by(dplyr::across(dplyr::all_of(id_cols)))
+  %>% dplyr::summarise(n_sig_genes = sum(wald_pval_adj < PVAL_THRESH, na.rm =
+                                           TRUE))
+)
+```
+
+```{r, fig.height=8, fig.width=10}
+# p <- ggplot2::ggplot(wald_gene_nsig_df, ggplot2::aes(x = contrast_description, 
+#                                              y = n_sig_genes,
+#                                              fill = contrast_description
+#                                              ))
+# p <- p + ggplot2::geom_col(position = "dodge", color = "black")
+# p <- p + ggplot2::scale_fill_manual(values = c("cornflowerblue", "goldenrod1", "lightcoral", "forestgreen", "gray", "darkorchid"))
+# p <- p + ggplot2::labs(x = "Contrast",
+#                        y = "Number of significant genes\n(p.adj < 0.05)",
+#                        fill = "Comparison"
+#                        )
+# p <- p + ggplot2::theme_bw()
+# p <- p + ggplot2::theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+# p <- p + ggplot2::theme(text = element_text(size=20))
+# p
+```
+
+```{r}
+# Count number of significant genes per contrast
+PVAL_THRESH <- 0.05
+glm_id_cols <- c("fit_model", 
+             # "contrast_string", 
+             "contrast_indices", 
+             "contrast_description"
+             )
+glm_gene_nsig_df <- data.frame(
+  glm_wald_df_all
+  %>% dplyr::group_by(dplyr::across(dplyr::all_of(glm_id_cols)))
+  %>% dplyr::summarise(n_sig_genes = sum(wald_pval_adj < PVAL_THRESH, na.rm =
+                                           TRUE))
+)
+
+# Count number of significant genes per contrast
+PVAL_THRESH <- 0.05
+limma_id_cols <- c("fit_model", 
+             # "contrast_string", 
+             # "contrast_indices", 
+             "contrast_description"
+             )
+limma_gene_nsig_df <- data.frame(
+  limma_df_all
+  %>% dplyr::group_by(dplyr::across(dplyr::all_of(limma_id_cols)))
+  %>% dplyr::summarise(n_sig_genes = sum(pval_adj < PVAL_THRESH, na.rm =
+                                           TRUE))
+)
+
+# Count number of significant genes per contrast
+PVAL_THRESH <- 0.05
+deseq2_id_cols <- c("fit_model", 
+             # "contrast_string", 
+             # "contrast_indices", 
+             "contrast_description"
+             )
+deseq2_gene_nsig_df <- data.frame(
+  deseq2_df_all
+  %>% dplyr::group_by(dplyr::across(dplyr::all_of(deseq2_id_cols)))
+  %>% dplyr::summarise(n_sig_genes = sum(pval_adj < PVAL_THRESH, na.rm =
+                                           TRUE))
+)
+
+plot_data_sub <- wald_gene_nsig_df[, c("fit_model", "contrast_description", "n_sig_genes")]
+glm_plot_data_sub <- glm_gene_nsig_df[, c("fit_model", "contrast_description", "n_sig_genes")]
+limma_data_sub <- limma_gene_nsig_df[, c("fit_model", "contrast_description", "n_sig_genes")]
+deseq2_data_sub <- deseq2_gene_nsig_df[, c("fit_model", "contrast_description", "n_sig_genes")]
+plot_data_comb <- rbind(plot_data_sub, glm_plot_data_sub, limma_data_sub, deseq2_data_sub)
+plot_data_comb$fit_model <- factor(plot_data_comb$fit_model, levels=c("TESSERA-Leroux", "DESeq2", "limma-voom", "Poisson GLM", "NB GLM", "GAM"))
+```
+
+```{r, fig.height=8, fig.width=10}
+p <- ggplot2::ggplot(plot_data_comb, ggplot2::aes(x = fit_model, 
+                                             y = n_sig_genes,
+                                             fill = fit_model
+                                             ))
+p <- p + ggplot2::geom_col(position = "dodge", color = "black")
+p <- p + ggplot2::facet_wrap(~contrast_description)
+p <- p + ggplot2::scale_fill_manual(values = model_fill_vals)
+p <- p + ggplot2::labs(x = "Contrast",
+                       y = "Number of significant genes\n(p.adj < 0.05)",
+                       fill = "Comparison"
+                       )
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+```
+
+```{r, fig.height=8, fig.width=10}
+p <- ggplot2::ggplot(plot_data_comb[which(plot_data_comb$contrast_description == "C_TAL v. PT_S1"), ], ggplot2::aes(x = fit_model, y = n_sig_genes, fill = fit_model))
+p <- p + ggplot2::geom_col(position = "dodge", color = "black")
+p <- p + ggplot2::facet_wrap(~contrast_description)
+p <- p + ggplot2::scale_fill_manual(values = model_fill_vals, name = "Fitted Model")
+p <- p + ggplot2::labs(x = "Fitted Model",
+                       y = "Number of significant genes (FDR < 0.05)"
+                       )
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+p <- p + ggplot2::theme(text = element_text(size=20), legend.position = "none")
+p
+ggsave(paste0(figure_path, "num_sig_genes_ctal_pt.pdf"), p, width = 8, height=8, units = "in")
+```
+
+```{r}
+# Subset to comparison of interest: C_TAL v. PT_S1
+limma_df_all <- limma_df_all[which(limma_df_all$contrast_description == "C_TAL v. PT_S1"), ]
+deseq2_df_all <- deseq2_df_all[which(deseq2_df_all$contrast_description == "C_TAL v. PT_S1"), ]
+glm_wald_df_all <- glm_wald_df_all[which(glm_wald_df_all$contrast_description == "C_TAL v. PT_S1"), ]
+wald_df_all <- wald_df_all[which(wald_df_all$contrast_description == "C_TAL v. PT_S1"), ]
+```
+
+```{r}
+# Jaccard similarity of top-n genes for each pair of methods and contrast
+tmp_wald_df <- dplyr::bind_rows(limma_df_all, deseq2_df_all, glm_wald_df_all, wald_df_all)
+n_list <- seq(1, 3000)
+
+plot_df <- list()
+for (mv1 in unique(tmp_wald_df$fit_model)) { # Loop over method 1
+  for (mv2 in unique(tmp_wald_df$fit_model)) { # Loop over method 2
+    if (mv1 == mv2) { # Don't bother with the same same method (trivial)
+      next
+    } else if (mv2 < mv1) { # We don't need to compare both (x, y) and (y, x)
+      next
+    }
+    
+    for (cd in unique(tmp_wald_df$contrast_description)) { # Loop over contrasts
+      #cat(Sys.time(), mv1, mv2, cd, "\n")
+      for (idx in 1:length(n_list)) {
+        g1 <- tmp_wald_df$gene[(tmp_wald_df$gene_rank <= n_list[idx]) & (tmp_wald_df$fit_model == mv1)]
+        g2 <- tmp_wald_df$gene[(tmp_wald_df$gene_rank <= n_list[idx]) & (tmp_wald_df$fit_model == mv2)]
+        
+        plot_df[[1 + length(plot_df)]] <- data.frame(
+          fit_model1 = mv1,
+          fit_model2 = mv2,
+          contrast_description = cd,
+          n = n_list[idx],
+          n_intersect = length(intersect(g1, g2)),
+          n_union = length(unique(c(g1, g2)))
+        )
+      }
+    }
+  }
+}
+plot_df <- dplyr::bind_rows(plot_df)
+plot_df$jaccard <- plot_df$n_intersect / plot_df$n_union
+```
+
+```{r}
+# Expected Jaccard similarity of random ordering
+j_trials <- 100
+j_mat <- array(data=NA, dim=c(length(n_list), j_trials, 2))
+gene_list <- unique(tmp_wald_df$gene)
+for (tr in 1:j_trials) {
+  g1 <- sample(gene_list, replace = FALSE)
+  g2 <- sample(gene_list, replace = FALSE)
+
+  for (idx in 1:nrow(j_mat)) {
+    j_mat[idx, tr, 1] <- length(intersect(g1[1:n_list[idx]], g2[1:n_list[idx]]))
+    j_mat[idx, tr, 2] <- length(union(g1[1:n_list[idx]], g2[1:n_list[idx]]))
+  }
+}
+exp_jaccard_data <- data.frame(n=n_list, expected_jaccard=rowMeans(j_mat[, , 1] / j_mat[, , 2]))
+
+plot_df <- merge(plot_df, exp_jaccard_data, by="n")
+```
+
+\newpage
+
+We compare the ranking of the genes by their Wald statistics for all models. 
+That is, for each pair of models (the GLMs and the Poisson-Leroux), as a function of the number of top genes $n$, we compute the Jaccard similarity (intersection divided by union) of the top-$n$ genes found by each method. 
+We compare these curves to the expected Jaccard similarity, assuming that the rankings were uniform and random. 
+To calculate the expected Jaccard similarity, for each value of n, randomly draw two lists of $n$ genes.
+Next, compute the Jaccard similarity between those two lists and repeat this procedure for 100 trials. Finally, take the average Jaccard similarity across all trials.
+
+```{r, fig.height=8, fig.width=10}
+color_vals <- c("#d62728","#1f77b4","#2ca02c","#ff7f0e","#9467bd","#8c564b","#e377c2",
+                "#7f7f7f","#bcbd22","#17becf","#ff9896","#aec7e8","#98df8a","#ffbb78", "brown")
+plot_df$method_comparison <- paste0(plot_df$fit_model1, " v. ", plot_df$fit_model2)
+p1 <- ggplot2::ggplot(data=plot_df, ggplot2::aes(x=n, 
+                                                 y=jaccard,
+                                                 color=method_comparison
+                                                 ))
+p1 <- p1 + ggplot2::geom_point(size=1)
+p1 <- p1 + ggplot2::geom_line(ggplot2::aes(x=n, y=expected_jaccard), color="black", lwd=1.5)
+p1 <- p1 + scale_color_manual(values = color_vals) #c("goldenrod", "lightcoral", "cornflowerblue", "purple", "seagreen", "darkorange"
+p1 <- p1 + ggplot2::guides(color = guide_legend(override.aes = list(size = 3)))
+p1 <- p1 + ggplot2::labs(x = expression("Top " * italic(n) * " Genes"), 
+                         y = "Jaccard Similarity",
+                         color = "Comparison"
+                         )
+p1 <- p1 + ggplot2::theme_bw()
+p1 <- p1 + ggplot2::theme(text=ggplot2::element_text(size=20),
+                          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p1
+ggsave(paste0(figure_path, "jaccard_all.pdf"), p1, width = 8, height=6, units = "in")
+```
+```{r, fig.height=8, fig.width=10}
+plot_df_sub_med <- plot_df[which(plot_df$method_comparison %in% c("DESeq2 v. limma-voom", "NB GLM v. Poisson GLM", "GAM v. Poisson GLM", "GAM v. NB GLM", "limma-voom v. TESSERA-Leroux", "DESeq2 v. TESSERA-Leroux", "Poisson GLM v. TESSERA-Leroux", "NB GLM v. TESSERA-Leroux", "GAM v. TESSERA-Leroux")), ]
+plot_df_sub_med$method_comparison <- factor(plot_df_sub_med$method_comparison, c("DESeq2 v. limma-voom", "NB GLM v. Poisson GLM", "GAM v. Poisson GLM", "GAM v. NB GLM", "limma-voom v. TESSERA-Leroux", "DESeq2 v. TESSERA-Leroux", "Poisson GLM v. TESSERA-Leroux", "NB GLM v. TESSERA-Leroux", "GAM v. TESSERA-Leroux"))
+
+p1 <- ggplot2::ggplot(data=plot_df_sub_med, ggplot2::aes(x=n, 
+                                                 y=jaccard,
+                                                 color=method_comparison
+                                                 ))
+p1 <- p1 + ggplot2::geom_point(size=1)
+p1 <- p1 + ggplot2::geom_line(ggplot2::aes(x=n, y=expected_jaccard), color="black", lwd=1.5)
+p1 <- p1 + facet_wrap(~contrast_description)
+p1 <- p1 + scale_color_manual(values = c("#d62728", "purple", "navy", "cornflowerblue", "seagreen", "lightgreen", "sienna", "darkorange", "goldenrod3", "darkgray"))
+p1 <- p1 + ggplot2::labs(x = expression("Top " * italic(n) * " Genes"), 
+                         y = "Jaccard Similarity",
+                         color = "Comparison"
+                         )
+p1 <- p1 + ggplot2::theme_bw()
+p1 <- p1 + ggplot2::theme(text = ggplot2::element_text(size = 20),
+                          axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1),
+                          legend.text = ggplot2::element_text(size = 12),
+                          legend.title = ggplot2::element_text(size = 16))
+p1 <- p1 + ggplot2::guides(color = guide_legend(override.aes = list(size = 3)))
+p1
+ggsave(paste0(figure_path, "jaccard.pdf"), p1, width = 8, height=6, units = "in")
+```
+
+```{r, fig.height=8, fig.width=10}
+plot_df_sub <- plot_df[which(plot_df$method_comparison %in% c("DESeq2 v. limma-voom", "DESeq2 v. TESSERA-Leroux", "limma-voom v. TESSERA-Leroux")), ]
+plot_df_sub$method_comparison <- factor(plot_df_sub$method_comparison, levels = c("DESeq2 v. limma-voom", "limma-voom v. TESSERA-Leroux", "DESeq2 v. TESSERA-Leroux"))
+
+p1 <- ggplot2::ggplot(data=plot_df_sub, ggplot2::aes(x=n, 
+                                                 y=jaccard,
+                                                 color=method_comparison
+                                                 ))
+p1 <- p1 + ggplot2::geom_point(size=1)
+p1 <- p1 + ggplot2::geom_line(ggplot2::aes(x=n, y=expected_jaccard), color="black", lwd=1.5)
+p1 <- p1 + scale_color_manual(values = c("cornflowerblue", "lightcoral", "goldenrod"))
+p1 <- p1 + ggplot2::guides(color = guide_legend(override.aes = list(size = 3)))
+p1 <- p1 + ggplot2::labs(x = expression("Top " * italic(n) * " Genes"), 
+                         y = "Jaccard Similarity",
+                         color = "Comparison"
+                         )
+p1 <- p1 + ggplot2::theme_bw()
+p1 <- p1 + ggplot2::theme(text=ggplot2::element_text(size=20),
+                          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p1
+ggsave(paste0(figure_path, "jaccard_pb.pdf"), p1, width = 8, height=6, units = "in")
+```
+
+\newpage
+
+
+
+```{r, fig.height=8, fig.width=10}
+p <- ggplot2::ggplot(plot_data_comb, ggplot2::aes(x = fit_model, 
+                                             y = n_sig_genes,
+                                             fill = fit_model
+                                             ))
+p <- p + ggplot2::geom_col(position = "dodge")
+p <- p + ggplot2::scale_fill_manual(values = model_fill_vals)
+p <- p + ggplot2::labs(x = "Contrast",
+                       y = "Number of significant genes\n(p.adj < 0.05)",
+                       fill = "Comparison"
+                       )
+p <- p + ggplot2::theme_bw()
+p <- p + ggplot2::theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+p <- p + ggplot2::theme(text = element_text(size=20))
+p
+```
+
+We next plot the ranks of the marker genes in the top 3000 genes by variance, as ranked by the magnitude of the Wald statistics for each method.
+We see that, in general, both the TESSERA Poisson-Leroux model and the GLMs rank the marker genes highly. 
+We also note that the rankings are similar across conditions, as expected.
+
+```{r, fig.height=8, fig.width=10}
+rank_plot <- tmp_wald_df
+rank_plot <- rank_plot[which(rank_plot$gene %in% mg_all), ]
+rank_plot$fit_model <- factor(rank_plot$fit_model, levels = c("TESSERA-Leroux", "DESeq2", "limma-voom", "Poisson GLM", "NB GLM", "GAM"))
+rank_plot$gene <- factor(rank_plot$gene, levels = mg_all)
+p1 <- ggplot2::ggplot(data=rank_plot, ggplot2::aes(x=gene, y=gene_rank, fill=fit_model))
+p1 <- p1 + ggplot2::geom_point(size=4, shape = 21, stroke = 0.5, color = "black") 
+p1 <- p1 + ggplot2::scale_fill_manual(values=model_fill_vals, name = "Fitted Model")
+p1 <- p1 + ggplot2::facet_wrap(~contrast_description)
+p1 <- p1 + ggplot2::theme_bw()
+p1 <- p1 + ggplot2::labs(x = "Gene", y = "Rank")
+p1 <- p1 + ggplot2::scale_y_continuous(trans = "sqrt", breaks = c(0, 50, 100, 250, 500, 1000, 2000, 3000))
+p1 <- p1 + ggplot2::theme(text=ggplot2::element_text(size=20),
+                          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+                          panel.grid.minor = element_blank())
+p1
+ggsave(paste0(figure_path, "ranks_ctal_pt.pdf"), p1, width = 8, height=6, units = "in")
+```
+
+\newpage
+
+We present a volcano plot to compare the Benjamini-Hochberg (BH) adjusted p-values (note, not the Wald statistics) with the contrast values.
+We perform a Benjamini-Hochberg adjustment for each set of p-values associated to the 3000 genes for a particular condition and model type.
+Both the Poisson-Leroux method and the GLMs have large beta (contrast) values for the marker genes and most also have small p-values, as you would expect.
+We note that there is a noticeable gap in the Poisson-Leroux volcano plots as we compute conditional p-values, meaning that any Wald statistic above our determined threshold gets ruled as significant and corresponds to a p-value of 0.
+
+```{r, fig.height=15, fig.width=20}
+# Volcano plot for TESSERA
+volc_plot <- tmp_wald_df
+volc_plot$marker_gene <- FALSE
+volc_plot[which(volc_plot$gene %in% mg), "marker_gene"] <- TRUE
+
+volc_plot$pval_adj_all <- volc_plot$wald_pval_adj
+pb_idx <- volc_plot$fit_model %in% c("DESeq2", "limma-voom")
+volc_plot$pval_adj_all[pb_idx] <- volc_plot$pval_adj[pb_idx]
+
+volc_plot$contrast_val_all <- volc_plot$contrast_val
+volc_plot$contrast_val_all[which(volc_plot$fit_model == "DESeq2")] <- volc_plot$log2FoldChange[which(volc_plot$fit_model == "DESeq2")]
+volc_plot$contrast_val_all[which(volc_plot$fit_model == "limma-voom")] <- volc_plot$logFC[which(volc_plot$fit_model == "limma-voom")]
+
+
+# So that we can plot zero p-values
+volc_plot$wald_pval_adj[volc_plot$wald_pval_adj < .Machine$double.eps] <- .Machine$double.eps
+volc_plot$pval_adj_all[volc_plot$pval_adj_all < .Machine$double.eps] <- .Machine$double.eps
+
+volc_plot$fit_model <- factor(volc_plot$fit_model, levels=c("TESSERA-Leroux", "DESeq2", "limma-voom", "Poisson GLM", "NB GLM", "GAM"))
+
+p1 <- ggplot2::ggplot(data=volc_plot, ggplot2::aes(x=contrast_val_all,
+                                                y=-log10(pval_adj_all),
+                                                color=marker_gene))
+p1 <- p1 + ggplot2::facet_wrap(~fit_model, ncol=2, scales = "free", labeller = 
+      labeller(.multi_line=FALSE))
+p1 <- p1 + ggplot2::geom_point(size=2, alpha=0.5)
+p1 <- p1 + ggplot2::scale_color_manual(values=c("darkgray", "red"), name = "Marker Gene")
+p1 <- p1 + ggplot2::coord_cartesian(clip = 'off')
+p1 <- p1 + ggplot2::theme_bw()
+p1 <- p1 + ggplot2::labs(x = "Estimated Contrast Value", y = "-log10(p-value)")
+p1 <- p1 + ggplot2::theme(text=ggplot2::element_text(size=20),
+                          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p1
+ggsave(paste0(figure_path, "volcano_plot.pdf"), p1, width = 12, height=12, units = "in")
+```
