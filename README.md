@@ -12,6 +12,8 @@ For example, identifying significant differences between distinct experimental c
 
 This repository contains the source code for the simulations and analyses in the paper describing **TESSERA**.
 
+The source code and documentation for installing and running the **TESSERA** package can be found [here](https://github.com/floricaconstantine/TESSERA/).
+
 ## Citation
 
 If you use **TESSERA** in your research or use the results of our analyses, please cite the following preprint:
